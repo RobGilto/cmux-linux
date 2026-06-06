@@ -243,30 +243,40 @@ fn build_ui(
         gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
 
-    // 2b. Ensure header-bar icons resolve even when the active GTK icon
-    // theme is non-GNOME (KDE Breeze on Hyprland/KDE only ships a subset
-    // of the freedesktop symbolic names cmux uses — e.g. tab-new-symbolic,
-    // web-browser-symbolic, sidebar-show-symbolic). Force Adwaita as the
-    // fallback theme so the missing names resolve from /usr/share/icons/Adwaita.
+    // 2b. Header-bar icons. cmux uses freedesktop symbolic names
+    // (tab-new-symbolic, web-browser-symbolic, sidebar-show-symbolic, …)
+    // that ship with Adwaita but not with every other GTK icon theme — KDE
+    // Breeze in particular only defines a small subset, leaving most cmux
+    // buttons rendered with a "missing icon" placeholder on Hyprland / KDE.
+    //
+    // Override BOTH `GtkSettings::gtk-icon-theme-name` and the per-display
+    // `IconTheme::theme_name`. Settings drives what IconTheme reads on
+    // theme-changed signals; setting it first prevents the desktop's
+    // gsettings/xsettings value from clobbering our override at any later
+    // point in the app lifecycle (theme reload, settings refresh, etc.).
     {
         use gtk4::prelude::*;
-        let icon_theme = gtk4::IconTheme::for_display(&display);
-        let mut search_path = icon_theme.search_path();
-        let adwaita = std::path::PathBuf::from("/usr/share/icons/Adwaita");
-        if adwaita.exists() && !search_path.iter().any(|p| p == &adwaita) {
-            search_path.push(adwaita);
+        let adwaita_index =
+            std::path::PathBuf::from("/usr/share/icons/Adwaita/index.theme");
+        if adwaita_index.exists() {
+            let settings = gtk4::Settings::for_display(&display);
+            settings.set_gtk_icon_theme_name(Some("Adwaita"));
+            let icon_theme = gtk4::IconTheme::for_display(&display);
+            let mut search_path = icon_theme.search_path();
+            for extra in [
+                "/usr/share/icons/Adwaita",
+                "/usr/share/icons/AdwaitaLegacy",
+                "/usr/share/icons/hicolor",
+            ] {
+                let p = std::path::PathBuf::from(extra);
+                if p.exists() && !search_path.iter().any(|q| q == &p) {
+                    search_path.push(p);
+                }
+            }
             icon_theme.set_search_path(
                 &search_path.iter().map(|p| p.as_path()).collect::<Vec<_>>(),
             );
-        }
-        // Adwaita Legacy carries the older `web-browser-symbolic` entry
-        // that newer freedesktop themes moved into `legacy/`.
-        let legacy = std::path::PathBuf::from("/usr/share/icons/AdwaitaLegacy");
-        if legacy.exists() && !search_path.iter().any(|p| p == &legacy) {
-            search_path.push(legacy);
-            icon_theme.set_search_path(
-                &search_path.iter().map(|p| p.as_path()).collect::<Vec<_>>(),
-            );
+            icon_theme.set_theme_name(Some("Adwaita"));
         }
     }
 

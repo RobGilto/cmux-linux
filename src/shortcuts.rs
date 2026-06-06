@@ -228,31 +228,33 @@ pub fn handle_focus_direction(state: &Rc<RefCell<AppState>>, direction: FocusDir
 }
 
 /// Open a browser preview pane (Ctrl+Shift+B).
-/// Launches the agent-browser daemon, navigates to about:blank, creates a preview pane,
-/// and starts the CDP screencast stream so frames render in the Picture widget.
+///
+/// Spawns the agent-browser daemon child process synchronously (cheap) and
+/// creates the preview pane immediately, then runs the slow part of the
+/// bootstrap (10s daemon-ready poll, Chrome `launch` round-trip, initial
+/// navigate + screencast_start) on a worker thread so the GTK main loop
+/// stays responsive. When the bootstrap finishes we hop back to the main
+/// thread via `glib::MainContext::spawn_local` and wire the pane's stream
+/// + input controllers there.
 pub fn handle_browser_open(state: &Rc<RefCell<AppState>>) {
-    // Step 1: Ensure daemon is running, launch browser, enable streaming, navigate
-    {
+    // Step 1 (sync, main thread): create BrowserManager if missing, spawn the
+    // daemon child if needed, snapshot the socket path for the worker.
+    let socket_path = {
         let mut s = state.borrow_mut();
         if s.browser_manager.is_none() {
             s.browser_manager = Some(crate::browser::BrowserManager::new());
         }
         let bm = s.browser_manager.as_mut().unwrap();
-        if let Err(e) = bm.ensure_daemon() {
-            eprintln!("cmux: browser.open failed to start daemon: {e}");
+        if let Err(e) = bm.spawn_daemon_child_if_needed() {
+            eprintln!("cmux: browser.open failed to spawn daemon: {e}");
             return;
         }
-        // Enable WebSocket stream server, launch Chrome, navigate, start screencast
-        let _ = bm.send_command("stream_enable", serde_json::json!({}));
-        let _ = bm.send_command("launch", serde_json::json!({"headless": true}));
-        if let Err(e) = bm.send_command("navigate", serde_json::json!({"url": "about:blank"})) {
-            eprintln!("cmux: browser.open navigate failed: {e}");
-            return;
-        }
-        let _ = bm.send_command("screencast_start", serde_json::json!({"format": "jpeg", "quality": 80}));
-    } // drop borrow
+        bm.daemon_socket_path()
+    };
 
-    // Step 2: Create preview pane
+    // Step 2 (sync, main thread): create the preview pane immediately so the
+    // user sees a placeholder right away. The stream + handlers get wired in
+    // step 4 once the daemon is ready.
     let pane_result = {
         let mut s = state.borrow_mut();
         if let Some(engine) = s.active_split_engine_mut() {
@@ -260,11 +262,54 @@ pub fn handle_browser_open(state: &Rc<RefCell<AppState>>) {
         } else {
             None
         }
-    }; // drop borrow
-
+    };
     let Some(widgets) = pane_result else {
         return;
     };
+
+    // Step 3 (worker thread): poll the daemon socket and send the initial
+    // command sequence. Each command opens its own short-lived UnixStream so
+    // we don't need to ferry any !Send state across the thread boundary —
+    // just the socket path.
+    let (tx, rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
+    {
+        let socket_path = socket_path.clone();
+        std::thread::spawn(move || {
+            let result = crate::browser::bootstrap_daemon_blocking(&socket_path);
+            let _ = tx.send(result);
+        });
+    }
+
+    // Step 4 (back on the main thread, after the worker signals): wire the
+    // stream + nav buttons + input controllers. We do this from a
+    // glib-driven async task so the closure can `await` the oneshot and we
+    // can still touch the GTK widgets here without thread-safety hoops.
+    let state_for_wire = state.clone();
+    glib::MainContext::default().spawn_local(async move {
+        match rx.await {
+            Ok(Ok(())) => {
+                if let Some(bm) = state_for_wire.borrow_mut().browser_manager.as_mut() {
+                    bm.preview_state = crate::browser::PreviewState::Connected;
+                }
+                wire_browser_pane(&state_for_wire, widgets);
+            }
+            Ok(Err(e)) => {
+                eprintln!("cmux: browser.open bootstrap failed: {e}");
+            }
+            Err(_) => {
+                eprintln!("cmux: browser.open worker dropped before completion");
+            }
+        }
+    });
+}
+
+/// Wire the streaming WebSocket, the nav buttons, and the mouse/keyboard/scroll
+/// controllers for an already-spawned preview pane. Called from the
+/// `handle_browser_open` continuation once `bootstrap_daemon_blocking` succeeds.
+fn wire_browser_pane(
+    state: &Rc<RefCell<AppState>>,
+    widgets: crate::browser::PreviewPaneWidgets,
+) {
     let picture = widgets.picture.clone();
     let url_entry = widgets.url_entry.clone();
     let picture_ref = picture.clone();

@@ -69,19 +69,28 @@ impl BrowserManager {
         std::os::unix::net::UnixStream::connect(self.daemon_socket_path()).is_ok()
     }
 
-    /// Auto-start the agent-browser daemon (D-05).
-    pub fn ensure_daemon(&mut self) -> Result<(), String> {
+    /// Spawn the agent-browser daemon child if it isn't already running.
+    ///
+    /// This is the *fast* half of the old `ensure_daemon`: the Command::spawn
+    /// call is a few milliseconds; what made the old path freeze the GTK main
+    /// thread was the 10-second blocking poll that followed it. Splitting the
+    /// two lets the caller spawn the child synchronously and then dispatch the
+    /// poll-and-handshake to a worker thread.
+    pub fn spawn_daemon_child_if_needed(&mut self) -> Result<(), String> {
         if self.daemon_ready() {
             return Ok(());
         }
+        if self.daemon_process.is_some() {
+            // A child is already in flight; the worker thread is responsible
+            // for waiting for it to start serving the socket.
+            return Ok(());
+        }
 
-        // Find agent-browser binary: check PATH, then alongside cmux binary.
         let binary_path = which_agent_browser().ok_or_else(|| {
             "agent-browser not found in PATH. Install it or place it alongside the cmux binary."
                 .to_string()
         })?;
 
-        // Create socket dir if needed.
         let socket_dir = Self::agent_browser_socket_dir();
         std::fs::create_dir_all(&socket_dir)
             .map_err(|e| format!("Failed to create socket dir {}: {}", socket_dir.display(), e))?;
@@ -97,17 +106,19 @@ impl BrowserManager {
             .map_err(|e| format!("Failed to spawn agent-browser: {}", e))?;
 
         self.daemon_process = Some(child);
+        self.preview_state = PreviewState::Loading;
+        Ok(())
+    }
 
-        // Poll daemon_ready() with 200ms intervals, up to 50 retries (10s).
-        for _ in 0..50 {
-            std::thread::sleep(std::time::Duration::from_millis(200));
-            if self.daemon_ready() {
-                self.preview_state = PreviewState::Connected;
-                return Ok(());
-            }
-        }
-
-        Err("agent-browser daemon failed to start within 10 seconds".to_string())
+    /// Legacy synchronous bootstrap. Kept for tests and one-off socket-API
+    /// callers. The GTK main loop must NEVER call this — it can block for up
+    /// to ten seconds. Use `spawn_daemon_child_if_needed` + the module-level
+    /// `bootstrap_daemon_blocking` helper from a worker thread instead.
+    pub fn ensure_daemon(&mut self) -> Result<(), String> {
+        self.spawn_daemon_child_if_needed()?;
+        bootstrap_daemon_blocking(&self.daemon_socket_path())?;
+        self.preview_state = PreviewState::Connected;
+        Ok(())
     }
 
     /// Send a newline-delimited JSON command to the daemon socket.
@@ -478,6 +489,89 @@ fn which_agent_browser() -> Option<PathBuf> {
         return Some(candidate);
     }
     None
+}
+
+/// Send a single newline-delimited JSON command to an agent-browser daemon
+/// socket. Module-level so worker threads can call it without holding any
+/// `BrowserManager` (which is `!Send` because of the embedded GTK widgets).
+pub fn send_command_to(
+    socket_path: &std::path::Path,
+    action: &str,
+    params: Value,
+) -> Result<Value, String> {
+    let mut stream = std::os::unix::net::UnixStream::connect(socket_path)
+        .map_err(|e| format!("Failed to connect to daemon socket: {}", e))?;
+
+    let req_id = format!("cmux-{}", rand_u64());
+    let mut request = if let Value::Object(map) = params {
+        Value::Object(map)
+    } else {
+        Value::Object(serde_json::Map::new())
+    };
+    request
+        .as_object_mut()
+        .unwrap()
+        .insert("id".to_string(), Value::String(req_id));
+    request
+        .as_object_mut()
+        .unwrap()
+        .insert("action".to_string(), Value::String(action.to_string()));
+
+    let mut json = serde_json::to_string(&request)
+        .map_err(|e| format!("Failed to serialize request: {}", e))?;
+    json.push('\n');
+    stream
+        .write_all(json.as_bytes())
+        .map_err(|e| format!("Failed to write to daemon socket: {}", e))?;
+
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    reader
+        .read_line(&mut line)
+        .map_err(|e| format!("Failed to read response: {}", e))?;
+
+    serde_json::from_str(&line)
+        .map_err(|e| format!("Failed to parse response: {}", e))
+}
+
+/// Blocking daemon-ready poll plus the four initial commands cmux runs
+/// after spawning a fresh agent-browser child: stream_enable, launch (Chrome),
+/// navigate(about:blank), and screencast_start. Designed to run on a worker
+/// thread so the GTK main loop stays responsive while the browser comes up.
+pub fn bootstrap_daemon_blocking(socket_path: &std::path::Path) -> Result<(), String> {
+    // Poll up to ten seconds for the socket to start accepting connections.
+    for _ in 0..50 {
+        if std::os::unix::net::UnixStream::connect(socket_path).is_ok() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    if std::os::unix::net::UnixStream::connect(socket_path).is_err() {
+        return Err("agent-browser daemon failed to start within 10 seconds".to_string());
+    }
+
+    // Fire the initial command sequence. `launch` waits for Chrome to spawn,
+    // so this is the part that costs seconds — exactly why we run it off the
+    // GTK main thread.
+    let _ = send_command_to(socket_path, "stream_enable", serde_json::json!({}));
+    let _ = send_command_to(
+        socket_path,
+        "launch",
+        serde_json::json!({"headless": true}),
+    );
+    send_command_to(
+        socket_path,
+        "navigate",
+        serde_json::json!({"url": "about:blank"}),
+    )
+    .map_err(|e| format!("navigate failed: {}", e))?;
+    let _ = send_command_to(
+        socket_path,
+        "screencast_start",
+        serde_json::json!({"format": "jpeg", "quality": 80}),
+    );
+
+    Ok(())
 }
 
 /// Simple random u64 for request IDs (no external crate needed).

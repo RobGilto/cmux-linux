@@ -1360,15 +1360,40 @@ fn restore_active_pane_focus() {
         }
     }
 
-    // Restore GTK keyboard focus to the active pane.
+    // Restore GTK keyboard focus to the active pane — but only if focus is
+    // not already inside an editable widget (browser URL bar, sidebar rename
+    // entry, SSH dialog, …). Stealing focus from those is a UX regression:
+    // every divider resize would interrupt typing.
     if let Ok(areas) = crate::ghostty::callbacks::GL_AREA_REGISTRY.lock() {
-        for area_ptr in areas.iter() {
+        let mut focus_in_editable = false;
+        if let Some(area_ptr) = areas.iter().next() {
             let area: gtk4::glib::translate::Borrowed<gtk4::GLArea> =
                 unsafe { gtk4::glib::translate::from_glib_borrow(area_ptr.0) };
-            if area.has_css_class("active-pane") {
-                area.grab_focus();
-                area.queue_render();
-                break;
+            if let Some(root) = area.root() {
+                let window: Option<gtk4::Window> = root.dynamic_cast::<gtk4::Window>().ok();
+                if let Some(window) = window {
+                    let focused: Option<gtk4::Widget> = gtk4::prelude::GtkWindowExt::focus(&window);
+                    if let Some(focused) = focused {
+                        if focused.is::<gtk4::Entry>()
+                            || focused.is::<gtk4::Text>()
+                            || focused.is::<gtk4::SearchEntry>()
+                            || focused.is::<gtk4::TextView>()
+                        {
+                            focus_in_editable = true;
+                        }
+                    }
+                }
+            }
+        }
+        if !focus_in_editable {
+            for area_ptr in areas.iter() {
+                let area: gtk4::glib::translate::Borrowed<gtk4::GLArea> =
+                    unsafe { gtk4::glib::translate::from_glib_borrow(area_ptr.0) };
+                if area.has_css_class("active-pane") {
+                    area.grab_focus();
+                    area.queue_render();
+                    break;
+                }
             }
         }
     }
