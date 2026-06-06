@@ -12,15 +12,17 @@ use std::path::Path;
 /// this function returns the best candidate even if the socket file
 /// is not yet present (for env-var overrides and fallback paths).
 pub fn discover_socket() -> Option<String> {
-    // 1. CMUX_SOCKET env var
-    if let Ok(val) = std::env::var("CMUX_SOCKET") {
+    // 1. CMUX_SOCKET_PATH — upstream `054cc9ff` standardised on this name
+    //    across the socket tooling and Python client; prefer it over the
+    //    fork's historical `CMUX_SOCKET` to keep wire/env compatibility.
+    if let Ok(val) = std::env::var("CMUX_SOCKET_PATH") {
         if !val.is_empty() {
             return Some(val);
         }
     }
 
-    // Also check CMUX_SOCKET_PATH for backwards compat with Python client
-    if let Ok(val) = std::env::var("CMUX_SOCKET_PATH") {
+    // 2. CMUX_SOCKET — retained for back-compat with existing fork users.
+    if let Ok(val) = std::env::var("CMUX_SOCKET") {
         if !val.is_empty() {
             return Some(val);
         }
