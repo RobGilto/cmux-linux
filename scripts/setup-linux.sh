@@ -27,6 +27,11 @@ if ! pkg-config --exists gtk4 2>/dev/null; then
     fi
 fi
 
+echo "==> Refreshing ghostty submodule..."
+# --force handles the case where an existing checkout points at the old pinned
+# SHA (4845e82d) that is no longer reachable on manaflow-ai/ghostty.
+git submodule update --init --force ghostty
+
 echo "==> Building libghostty.a from ghostty submodule..."
 cd ghostty
 

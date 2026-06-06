@@ -75,6 +75,15 @@ pub fn create_surface(
     // Rc<RefCell<...>> is safe here: all callbacks run on the GLib main thread.
     let surface_cell: Rc<RefCell<Option<ffi::ghostty_surface_t>>> = Rc::new(RefCell::new(None));
 
+    // Sibling cell for the io_write_userdata raw pointer, used only for SSH
+    // manual-mode surfaces. ghostty.h exposes no destructor callback for this
+    // field, so when the surface is freed (unrealize, or stale-cache cleanup
+    // in realize) we must `Arc::from_raw` here to drop the strong reference
+    // we incremented before handing it to ghostty_surface_new. Without this,
+    // every reparent of an SSH pane leaks one Arc<IoWriteContext>.
+    let ssh_userdata_cell: Rc<RefCell<Option<*const crate::ssh::bridge::IoWriteContext>>> =
+        Rc::new(RefCell::new(None));
+
     // ── GtkGLArea::realize ───────────────────────────────────────────────────
     // GL context is now valid. Create the surface HERE so ghostty can access
     // the GL context immediately after creation (fixes segfault in set_content_scale).
@@ -85,6 +94,7 @@ pub fn create_surface(
     let pane_id_for_log = pane_id;
     gl_area.connect_realize({
         let cell = surface_cell.clone();
+        let userdata_cell = ssh_userdata_cell.clone();
         let io_mode = io_mode;
         move |area| {
             eprintln!(
@@ -108,38 +118,41 @@ pub fn create_surface(
             // (via `enter` signal). Calling set_focus(true) here incorrectly marks the old
             // pane as focused, causing both panes to have focused=true simultaneously and
             // triggering Ghostty's early-return guard on the new pane's subsequent focus calls.
-            if let Some(existing_surface) = *cell.borrow() {
+            // On re-realize, the prior GL context was destroyed in unrealize
+            // and `cell` should be None (unrealize frees the surface). If a
+            // surface is still cached here, that means unrealize was bypassed
+            // (shouldn't happen with the current GTK lifecycle, but defend
+            // against it): free it before falling through to fresh creation.
+            //
+            // We previously kept the old surface and called
+            // `ghostty_surface_display_realized` to re-init GL state in place,
+            // but that export was dropped from manaflow-ai/ghostty when the
+            // pinned SHA (4845e82d) became unreachable. Reusing the cached
+            // surface against a brand-new GL context is undefined behavior
+            // (textures/FBOs/shaders refer to a context that no longer exists).
+            // Until embedded.zig re-exports displayRealized()/displayUnrealized()
+            // (Phase C), the correct fallback is to allocate a fresh surface.
+            // See myc task #1 (see docs/phase-c-plan.md §1).
+            if let Some(stale_surface) = cell.borrow_mut().take() {
                 eprintln!(
-                    "cmux: GLArea {:p} re-realized — reinitializing GL resources for surface {:p}",
+                    "cmux: GLArea {:p} re-realized with cached surface {:p} — freeing and re-creating (display_realized export missing)",
                     area.as_ptr(),
-                    existing_surface
+                    stale_surface,
                 );
-                // Reinitialize renderer GL resources (shaders, swap chain) for the
-                // new GL context. This matches Ghostty's own GTK apprt glareaRealize
-                // which calls displayRealized() after reparent/display-move.
-                //
-                // TODO(cmux-linux): the `ghostty_surface_display_realized` C export was
-                // dropped when the pinned manaflow-ai/ghostty SHA (4845e82d) became
-                // unreachable. The underlying renderer.displayRealized() still exists
-                // inside ghostty's GTK apprt but is no longer exposed through the
-                // embedded API. Skipping the call degrades pane reparent / display-move
-                // (the renderer may keep stale GL resources after move-to-another-monitor)
-                // but lets the rest of the surface lifecycle work. Re-add an export to
-                // ghostty/src/apprt/embedded.zig once we pin a fresh fork SHA in Phase C.
-                let scale = area.scale_factor() as f64;
-                let w = area.width();
-                let h = area.height();
-                unsafe {
-                    let phys_w = (w as f64 * scale) as u32;
-                    let phys_h = (h as f64 * scale) as u32;
-                    if phys_w > 0 && phys_h > 0 {
-                        ffi::ghostty_surface_set_size(existing_surface, phys_w, phys_h);
-                    }
-                    ffi::ghostty_surface_set_content_scale(existing_surface, scale, scale);
-                    ffi::ghostty_surface_refresh(existing_surface);
+                if let Ok(mut registry) = callbacks::SURFACE_REGISTRY.lock() {
+                    registry.remove(&(stale_surface as usize));
                 }
-                area.queue_render();
-                return;
+                // Drop the SSH io_write_userdata Arc, if any, BEFORE freeing
+                // the surface — once freed, ghostty's destructor may walk the
+                // userdata pointer for its own cleanup.
+                if let Some(ctx_raw) = userdata_cell.borrow_mut().take() {
+                    unsafe {
+                        std::sync::Arc::from_raw(ctx_raw);
+                    }
+                }
+                unsafe {
+                    ffi::ghostty_surface_free(stale_surface);
+                }
             }
 
             eprintln!("cmux: GL context made current, no error");
@@ -182,10 +195,16 @@ pub fn create_surface(
                 if let SurfaceIoMode::Manual { ref io_write_ctx } = io_mode {
                     surface_config.io_mode = ffi::ghostty_surface_io_mode_e_GHOSTTY_SURFACE_IO_MANUAL;
                     surface_config.io_write_cb = Some(crate::ssh::bridge::ssh_io_write_cb);
-                    // Increment Arc refcount for the raw pointer — the matching
-                    // Arc::from_raw happens in unrealize/cleanup.
-                    let ctx_raw = std::sync::Arc::into_raw(io_write_ctx.clone()) as *mut std::ffi::c_void;
-                    surface_config.io_write_userdata = ctx_raw;
+                    // Increment Arc refcount for the raw pointer. The matching
+                    // Arc::from_raw runs in unrealize (or stale-cache cleanup
+                    // in this same closure on a re-realize); record the raw
+                    // pointer in userdata_cell so those paths can find it.
+                    // ghostty.h does not expose a destructor for
+                    // io_write_userdata, so we own the drop here.
+                    let ctx_raw =
+                        std::sync::Arc::into_raw(io_write_ctx.clone());
+                    surface_config.io_write_userdata = ctx_raw as *mut std::ffi::c_void;
+                    *userdata_cell.borrow_mut() = Some(ctx_raw);
                 }
 
                 eprintln!("cmux: calling ghostty_surface_new");
@@ -244,11 +263,15 @@ pub fn create_surface(
             // Also store in global for read_clipboard_cb (which has no surface arg).
             SURFACE_PTR.store(surface as usize, Ordering::SeqCst);
 
-            // Register this GLArea in the multi-surface registry for wakeup_cb
+            // Register this GLArea in the multi-surface registry for wakeup_cb.
+            // Dedupe before pushing: GTK re-realize on the same widget would
+            // otherwise accumulate duplicate entries, causing wakeup_cb to
+            // queue_render() the same area N times per wakeup.
             if let Ok(mut areas) = callbacks::GL_AREA_REGISTRY.lock() {
-                areas.push(callbacks::GtkGLAreaPtr(
-                    area.as_ptr() as *mut gtk4::ffi::GtkGLArea
-                ));
+                let raw_ptr = area.as_ptr() as *mut gtk4::ffi::GtkGLArea;
+                if !areas.iter().any(|p| p.0 == raw_ptr) {
+                    areas.push(callbacks::GtkGLAreaPtr(raw_ptr));
+                }
             }
             // Register GLArea → surface mapping for notify::position focus restore
             if let Ok(mut gl_to_surface) = callbacks::GL_TO_SURFACE.lock() {
@@ -264,6 +287,7 @@ pub fn create_surface(
     {
         let pane_id_unrealize = pane_id;
         let cell_unrealize = surface_cell.clone();
+        let userdata_unrealize = ssh_userdata_cell.clone();
         gl_area.connect_unrealize(move |area| {
             eprintln!(
                 "cmux: GLArea {:p} pane={} UNREALIZE — freeing GL resources",
@@ -272,16 +296,52 @@ pub fn create_surface(
             );
             // Make GL context current so Ghostty can properly free GL objects.
             area.make_current();
-            if let Some(surface) = *cell_unrealize.borrow() {
-                // TODO(cmux-linux): paired with the display_realized comment in
-                // create_surface(). The `ghostty_surface_display_unrealized`
-                // export is missing from current ghostty; skipping it leaks the
-                // GL resources held by ghostty's renderer until the surface is
-                // freed. Re-add the export in Phase C and restore this call.
-                let _ = surface;
+            // Take the surface out of the cell — it must not survive the GL
+            // context teardown. Until ghostty re-exports
+            // `ghostty_surface_display_unrealized` (Phase C, myc task #1 (see docs/phase-c-plan.md §1)),
+            // there is no in-place "release GL state but keep surface" path:
+            // the surface internally holds renderer state keyed to the GL
+            // context that is about to die. Free the whole surface; the next
+            // realize allocates a fresh one. This loses keep-alive state
+            // (scrollback retention across reparent) but avoids the UB of
+            // reusing GPU handles minted for a destroyed context.
+            // Drop this GLArea from the wakeup registry FIRST — wakeup_cb runs
+            // off the main thread and is the loudest stale-pointer consumer.
+            // The free-surface block below tears down ghostty state next.
+            let area_raw = area.as_ptr() as *mut gtk4::ffi::GtkGLArea;
+            if let Ok(mut areas) = callbacks::GL_AREA_REGISTRY.lock() {
+                areas.retain(|p| p.0 != area_raw);
+            }
+            if let Ok(mut gl_to_surface) = callbacks::GL_TO_SURFACE.lock() {
+                gl_to_surface.remove(&(area.as_ptr() as usize));
+            }
+
+            if let Some(surface) = cell_unrealize.borrow_mut().take() {
                 eprintln!(
-                    "cmux: display_unrealized skipped (export missing in current ghostty)",
+                    "cmux: freeing ghostty surface {:p} on unrealize",
+                    surface,
                 );
+                if let Ok(mut registry) = callbacks::SURFACE_REGISTRY.lock() {
+                    registry.remove(&(surface as usize));
+                }
+                // Clear the stale-SURFACE_PTR window for the clipboard
+                // callbacks: if it pointed at this surface, zero it so the
+                // next clipboard event early-returns instead of dereferencing
+                // a freed pointer. The callbacks must check for 0/null.
+                let surface_as_usize = surface as usize;
+                if SURFACE_PTR.load(Ordering::SeqCst) == surface_as_usize {
+                    SURFACE_PTR.store(0, Ordering::SeqCst);
+                }
+                // Drop the SSH io_write_userdata Arc BEFORE freeing the
+                // surface — see realize for the rationale.
+                if let Some(ctx_raw) = userdata_unrealize.borrow_mut().take() {
+                    unsafe {
+                        std::sync::Arc::from_raw(ctx_raw);
+                    }
+                }
+                unsafe {
+                    ffi::ghostty_surface_free(surface);
+                }
             }
         });
     }

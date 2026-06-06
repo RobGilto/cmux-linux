@@ -107,7 +107,13 @@ git add ghostty
 git commit -m "Update ghostty submodule"
 ```
 
-See `docs/ghostty-fork.md` for fork-specific notes when they exist.
+Active upstream-sync work and fork-specific notes are tracked in
+`docs/phase-c-plan.md`.
+
+> Upgrading an existing checkout: the previously pinned ghostty SHA
+> (`4845e82d`) is no longer reachable on `manaflow-ai/ghostty`. Use
+> `git submodule update --init --force ghostty` to reset to the current
+> pinned SHA.
 
 ## License
 

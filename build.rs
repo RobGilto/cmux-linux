@@ -13,6 +13,11 @@ fn main() {
     // path to the linker rather than relying on the -lNAME search convention.
     println!("cargo:rustc-link-search=native={}", ghostty_lib_path);
     println!("cargo:rustc-link-arg={}/ghostty-internal.a", ghostty_lib_path);
+    // Rebuild when the archive itself changes — e.g. after a `zig build`
+    // inside ghostty/. Without this, cargo will reuse the previously linked
+    // binary even after the archive is regenerated, silently shipping stale
+    // ghostty symbols.
+    println!("cargo:rerun-if-changed={}/ghostty-internal.a", ghostty_lib_path);
 
     // Note: ghostty-internal.a is a CombinedArchive that already bundles
     // simdutf.o and libhighway.a. The fork's earlier build.rs linked them
@@ -30,11 +35,11 @@ fn main() {
 
     // Link the GLAD loader object file — provides gladLoaderLoadGLContext and
     // gladLoaderUnloadGLContext which are needed by ghostty's OpenGL renderer.
+    // The .o is checked into the repo; build.rs does not recompile it from
+    // ghostty/vendor/glad/src/gl.c. If glad ever needs regenerating, do so
+    // out-of-band and commit the new .o.
     println!("cargo:rustc-link-arg={}/glad.o", manifest_dir);
-
-    // Rebuild if the glad source changes
-    println!("cargo:rerun-if-changed=ghostty/vendor/glad/src/gl.c");
-    println!("cargo:rerun-if-changed=ghostty/vendor/glad/include/glad/gl.h");
+    println!("cargo:rerun-if-changed={}/glad.o", manifest_dir);
 
     // ghostty-internal.a requires these system libraries at link time.
     //
@@ -122,6 +127,14 @@ fn main() {
         // Needed for types that reference C integer types
         .allowlist_item("ghostty_.*")
         .allowlist_item("GHOSTTY_.*")
+        // Block the two display lifecycle exports: they are declared in
+        // ghostty.h (held over from the fork's earlier pinned SHA) but no
+        // longer defined in ghostty-internal.a. Blocking them in bindgen
+        // prevents any future Rust caller from compile-succeeding into a
+        // link-time `undefined reference` error. Restore once Phase C
+        // re-exports them — see myc task #1 (see docs/phase-c-plan.md §1).
+        .blocklist_function("ghostty_surface_display_realized")
+        .blocklist_function("ghostty_surface_display_unrealized")
         .generate()
         .expect("Unable to generate ghostty bindings");
 

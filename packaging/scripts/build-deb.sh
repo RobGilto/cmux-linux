@@ -16,13 +16,28 @@ AGENT_BROWSER="${4:-$REPO_ROOT/target/release/agent-browser}"
 # Extract version from Cargo.toml
 VERSION=$(grep '^version' "$REPO_ROOT/Cargo.toml" | head -1 | sed 's/.*"\(.*\)"/\1/')
 
-# Verify all binaries exist
-for bin in "$CMUX_APP" "$CMUX_CLI" "$CMUXD_REMOTE" "$AGENT_BROWSER"; do
+# Verify required binaries exist. agent-browser is optional — the source
+# crate is not yet re-included in this repo (Phase B note); ship without it
+# and let runtime FHS lookup find an external install, or set
+# CMUX_AGENT_BROWSER_REQUIRED=1 in CI to fail closed.
+for bin in "$CMUX_APP" "$CMUX_CLI" "$CMUXD_REMOTE"; do
     if [[ ! -f "$bin" ]]; then
         echo "ERROR: Binary not found: $bin" >&2
         exit 1
     fi
 done
+
+INCLUDE_AGENT_BROWSER=1
+if [[ ! -f "$AGENT_BROWSER" ]]; then
+    if [[ "${CMUX_AGENT_BROWSER_REQUIRED:-0}" == "1" ]]; then
+        echo "ERROR: agent-browser binary not found at $AGENT_BROWSER (CMUX_AGENT_BROWSER_REQUIRED=1)" >&2
+        exit 1
+    fi
+    echo "WARNING: agent-browser not found at $AGENT_BROWSER; building .deb without browser daemon."
+    echo "         Browser commands will fail at runtime until users drop a binary at"
+    echo "         ~/.local/share/cmux/bin/agent-browser. See README 'Browser Automation' section."
+    INCLUDE_AGENT_BROWSER=0
+fi
 
 OUTPUT_DIR="${REPO_ROOT}/dist"
 mkdir -p "$OUTPUT_DIR"
@@ -36,7 +51,9 @@ install -Dm0755 "$CMUX_APP" "$PKG_ROOT/usr/bin/cmux-app.bin"
 install -Dm0755 "$REPO_ROOT/packaging/scripts/cmux-app-wrapper.sh" "$PKG_ROOT/usr/bin/cmux-app"
 install -Dm0755 "$CMUX_CLI" "$PKG_ROOT/usr/bin/cmux"
 install -Dm0755 "$CMUXD_REMOTE" "$PKG_ROOT/usr/lib/cmux/cmuxd-remote"
-install -Dm0755 "$AGENT_BROWSER" "$PKG_ROOT/usr/lib/cmux/agent-browser"
+if [[ "$INCLUDE_AGENT_BROWSER" == "1" ]]; then
+    install -Dm0755 "$AGENT_BROWSER" "$PKG_ROOT/usr/lib/cmux/agent-browser"
+fi
 
 # Desktop metadata
 install -Dm0644 "$REPO_ROOT/packaging/desktop/com.cmux_lx.terminal.desktop" \

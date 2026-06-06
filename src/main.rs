@@ -19,7 +19,12 @@ mod header_bar;
 mod ssh_hosts;
 mod ssh_dialog;
 
-const APP_ID: &str = "io.cmux.App";
+/// freedesktop application ID. MUST match the basename of the .desktop and
+/// metainfo files shipped under packaging/desktop/, otherwise GNOME/KDE will
+/// not associate the running GApplication with its desktop entry (icons,
+/// notifications, DBusActivatable all silently break). Reference:
+/// .planning/debug/resolved/bell-notification-missing.md.
+const APP_ID: &str = "com.cmux_lx.terminal";
 
 const APP_CSS: &str = "
 /* cmux Phase 2 styles — per UI-SPEC.md */

@@ -130,6 +130,36 @@ the Python `tests_v2/` suite passing.
 Support. Phase C already did the socket env-var preference swap; the
 marker file + password file paths haven't been audited.
 
+## Deferred low-priority items (post-adversarial review)
+
+These were surfaced during the adversarial review on `fix/linux-port-modernize`
+but deliberately not fixed in that branch.
+
+- **cmux-browser skill + packaging/CLAUDE.md vs optional agent-browser.**
+  The packaging now skips the `agent-browser` binary install when
+  absent (Phase A+adversarial review fix), but the
+  `cmux-browser` skill files and `packaging/CLAUDE.md` still ship
+  unconditionally and advertise browser commands as available. A
+  one-line note was added to `packaging/CLAUDE.md` to call out the
+  daemon dependency; a fuller fix (skip the skill copy when
+  `INCLUDE_AGENT_BROWSER=0`, or add a runtime probe in `cmux browser`
+  that exits with a clear "agent-browser not installed" message) is
+  Phase C work — paired with myc task #2 since the right answer is to
+  finish wiring agent-browser back in.
+- **`TODO.md` and `PROJECTS.md` are historical macOS-era documents.**
+  Both still describe upstream-imported items (WKWebView, Sparkle,
+  Bonsplit, etc.) that no longer apply on Linux. Pre-existing — not
+  introduced by Phase B. Cheap fix: add a `STATUS: historical / see
+  myc epic` header to each; full triage is Phase C-adjacent.
+- **Clipboard callback re-entry.** `read_clipboard_cb` snapshots
+  `SURFACE_PTR` before `block_on` re-enters the GLib main loop; an
+  unrealize during that window can free the surface and the cb then
+  completes the request against freed memory. Preexisting — not
+  introduced by the adversarial review's free-on-unrealize fix
+  (which actually *narrowed* the window via `SURFACE_PTR` clear, just
+  not for the local snapshot). Phase C should rework the clipboard
+  path to re-check `SURFACE_REGISTRY` after `block_on`.
+
 ## Out of scope (post-port)
 
 - AppImage + Flatpak packaging (was already labelled Phase 13 in the

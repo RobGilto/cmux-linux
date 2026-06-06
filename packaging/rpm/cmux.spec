@@ -36,7 +36,11 @@ install -Dm0755 %{_sourcedir}/cmux-app %{buildroot}%{_bindir}/cmux-app.bin
 install -Dm0755 %{_sourcedir}/cmux-app-wrapper.sh %{buildroot}%{_bindir}/cmux-app
 install -Dm0755 %{_sourcedir}/cmux %{buildroot}%{_bindir}/cmux
 install -Dm0755 %{_sourcedir}/cmuxd-remote %{buildroot}%{_libdir}/cmux/cmuxd-remote
-install -Dm0755 %{_sourcedir}/agent-browser %{buildroot}%{_libdir}/cmux/agent-browser
+# agent-browser is optional — build-rpm.sh skips the copy when the binary is
+# absent; mirror the conditional install here.
+if [ -f %{_sourcedir}/agent-browser ]; then
+    install -Dm0755 %{_sourcedir}/agent-browser %{buildroot}%{_libdir}/cmux/agent-browser
+fi
 
 install -Dm0644 %{_sourcedir}/com.cmux_lx.terminal.desktop %{buildroot}%{_datadir}/applications/com.cmux_lx.terminal.desktop
 install -Dm0644 %{_sourcedir}/com.cmux_lx.terminal.metainfo.xml %{buildroot}%{_datadir}/metainfo/com.cmux_lx.terminal.metainfo.xml
@@ -67,7 +71,11 @@ install -Dm0644 %{_sourcedir}/CLAUDE.md %{buildroot}%{_datadir}/cmux/CLAUDE.md
 %{_bindir}/cmux-app.bin
 %{_bindir}/cmux
 %{_libdir}/cmux/cmuxd-remote
-%{_libdir}/cmux/agent-browser
+# agent-browser ships only when present in the source tree; rpmbuild has no
+# clean conditional for %files entries, so use %{?with_agent_browser} via a
+# global. The default RPM macro 'with_agent_browser' is set to 0 when the
+# binary was absent in %install; build-rpm.sh wires this up.
+%{?with_agent_browser:%{_libdir}/cmux/agent-browser}
 %{_datadir}/applications/com.cmux_lx.terminal.desktop
 %{_datadir}/metainfo/com.cmux_lx.terminal.metainfo.xml
 %{_datadir}/icons/hicolor/48x48/apps/com.cmux_lx.terminal.png

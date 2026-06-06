@@ -44,12 +44,14 @@ sudo rpm -i cmux-0.1.0-1.x86_64.rpm
 # Prerequisites:
 #   - Rust toolchain (rustup)
 #   - Zig 0.15.2 (mise/asdf, or download from ziglang.org)
-#   - GTK4 + libclang dev headers
-#       Debian/Ubuntu:  sudo apt-get install libgtk-4-dev libclang-dev
-#       Fedora/RHEL:    sudo dnf install gtk4-devel clang-devel
-#       Arch:           sudo pacman -S gtk4 clang
+#   - GTK4 + libclang + libc++ dev headers
+#       Debian/Ubuntu:  sudo apt-get install libgtk-4-dev libclang-dev libc++-dev libc++abi-dev
+#       Fedora/RHEL:    sudo dnf install gtk4-devel clang-devel libcxx-devel libcxxabi-devel
+#       Arch:           sudo pacman -S gtk4 clang libc++ libc++abi
 #
-git submodule update --init ghostty           # the Linux build only needs ghostty
+# setup-linux.sh runs `git submodule update --init --force ghostty` for you;
+# the --force is required because the previously pinned ghostty SHA
+# (4845e82d) is no longer reachable on manaflow-ai/ghostty.
 ./scripts/setup-linux.sh                      # builds ghostty-internal.a
 cargo build --release --bin cmux --bin cmux-app
 ./scripts/install-cmuxd-remote.sh             # builds + installs cmuxd-remote SSH helper
@@ -153,7 +155,10 @@ Shortcuts are configurable via TOML config file.
 ```bash
 # Build all release binaries
 cargo build --release --bin cmux --bin cmux-app
-cargo build --release -p agent-browser
+# agent-browser is an external sidecar binary (not in this repo). Build it
+# from https://github.com/vercel-labs/agent-browser and drop the binary at
+# ~/.local/share/cmux/bin/agent-browser, or `cp` it next to your packaging
+# inputs before running build-deb.sh / build-rpm.sh.
 
 # Build .deb
 ./packaging/scripts/build-deb.sh

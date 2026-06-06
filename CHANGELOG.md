@@ -64,6 +64,56 @@ exist on both ports, see the upstream changelog for macOS history.
   `~/.local/share/cmux/bin/agent-browser` (since the source crate is
   not yet re-included in this repo).
 
+### Fixed (adversarial review round 1)
+
+- **APP_ID** changed from `io.cmux.App` to `com.cmux_lx.terminal` in
+  `src/main.rs` to match the freedesktop ID used by all packaging
+  metadata. Without this, GNOME/KDE did not associate the running
+  app with its `.desktop` entry — notifications, taskbar icon, and
+  DBusActivatable all silently broke.
+- **agent-browser is now optional in packaging.** `build-deb.sh`,
+  `build-rpm.sh`, and `cmux.spec` no longer fail when the binary is
+  absent. Set `CMUX_AGENT_BROWSER_REQUIRED=1` in CI to keep the old
+  fail-closed behavior.
+- **`build.rs`** now has `cargo:rerun-if-changed` directives for
+  `ghostty-internal.a` and `glad.o`; the previous directives pointed
+  at source files that `build.rs` did not compile.
+- **`build.rs`** also blocks the two missing surface-lifecycle
+  exports (`ghostty_surface_display_realized` / `..._unrealized`)
+  via bindgen, so a future caller cannot compile-succeed into a
+  link-time `undefined reference`.
+- **`scripts/setup-linux.sh`** now runs `git submodule update --init
+  --force ghostty` itself — existing checkouts pointing at the
+  unreachable `4845e82d` SHA could not otherwise advance.
+- **README** no longer instructs users to run
+  `cargo build --release -p agent-browser`; the workspace member was
+  removed in Phase A and the documented command would have failed.
+
+### Fixed (adversarial review round 2)
+
+- **SSH `IoWriteContext` leak.** Round-1 introduced a
+  `ghostty_surface_free` call on GLArea unrealize. SSH manual-mode
+  surfaces had been incrementing an `Arc<IoWriteContext>` and handing
+  the raw pointer to ghostty as `io_write_userdata`, but `ghostty.h`
+  exposes no destructor for that field. Every reparent leaked one
+  strong reference. `surface.rs` now tracks the raw pointer in a
+  sibling cell and `Arc::from_raw`s it before the surface is freed.
+- **`GL_AREA_REGISTRY` duplicates.** GTK re-realize pushed a second
+  entry for the same widget pointer; `wakeup_cb` then queue_render'd
+  the area N times per wakeup. Registry now dedupes on push and
+  removes the entry on unrealize.
+- **`GL_TO_SURFACE` stale entries.** Map now drops the entry on
+  unrealize, closing the stale-pointer window for any consumer that
+  reaches into it after the GL context dies.
+- **`SURFACE_PTR` use-after-free window.** Clipboard callbacks read a
+  global last-active-surface pointer; the unrealize free path now
+  clears `SURFACE_PTR` when it pointed at the freed surface so a
+  clipboard event mid-reparent early-returns instead of dereferencing
+  freed memory.
+- **Docs.** `README.md` and `CLAUDE.md` quickstart no longer instruct
+  users to run a manual `git submodule update` (the script does it,
+  with `--force`).
+
 ### Known issues / Phase C work
 - Pane reparent / display-move may leak GL resources until Phase C
   restores or replaces the surface display lifecycle hooks.

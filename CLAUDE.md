@@ -10,12 +10,16 @@ implementation is live on Linux.
 ## Initial setup
 
 ```bash
-git submodule update --init ghostty   # only the ghostty submodule is needed
-./scripts/setup-linux.sh              # installs GTK4/clang/libc++ dev headers,
+./scripts/setup-linux.sh              # runs `git submodule update --init --force ghostty`,
+                                      # installs GTK4/clang/libc++ dev headers,
                                       # then builds ghostty-internal.a
 cargo build --release
 ./scripts/install-cmuxd-remote.sh     # builds + installs the Go SSH daemon
 ```
+
+The `--force` on the submodule update is required: the previously pinned
+ghostty SHA (`4845e82d`) is no longer reachable on `manaflow-ai/ghostty`,
+so an existing checkout will refuse to update without it.
 
 Run the app from the build tree:
 

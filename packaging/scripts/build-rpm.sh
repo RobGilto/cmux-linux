@@ -19,13 +19,26 @@ AGENT_BROWSER="${4:-${REPO_ROOT}/target/release/agent-browser}"
 # Extract version from Cargo.toml
 VERSION=$(grep '^version' "$REPO_ROOT/Cargo.toml" | head -1 | sed 's/.*"\(.*\)"/\1/')
 
-# Verify binaries exist
-for bin in "$CMUX_APP" "$CMUX_CLI" "$CMUXD_REMOTE" "$AGENT_BROWSER"; do
+# Verify required binaries exist. agent-browser is optional — the source
+# crate is not yet re-included in this repo; ship without it and let runtime
+# FHS lookup find an external install, or set CMUX_AGENT_BROWSER_REQUIRED=1
+# in CI to fail closed.
+for bin in "$CMUX_APP" "$CMUX_CLI" "$CMUXD_REMOTE"; do
     if [[ ! -f "$bin" ]]; then
         echo "ERROR: Binary not found: $bin" >&2
         exit 1
     fi
 done
+
+INCLUDE_AGENT_BROWSER=1
+if [[ ! -f "$AGENT_BROWSER" ]]; then
+    if [[ "${CMUX_AGENT_BROWSER_REQUIRED:-0}" == "1" ]]; then
+        echo "ERROR: agent-browser binary not found at $AGENT_BROWSER (CMUX_AGENT_BROWSER_REQUIRED=1)" >&2
+        exit 1
+    fi
+    echo "WARNING: agent-browser not found at $AGENT_BROWSER; building .rpm without browser daemon."
+    INCLUDE_AGENT_BROWSER=0
+fi
 
 OUTPUT_DIR="${REPO_ROOT}/dist"
 mkdir -p "$OUTPUT_DIR"
@@ -45,7 +58,9 @@ cp "$CMUX_APP" "$STAGING/cmux-app"
 cp "$REPO_ROOT/packaging/scripts/cmux-app-wrapper.sh" "$STAGING/cmux-app-wrapper.sh"
 cp "$CMUX_CLI" "$STAGING/cmux"
 cp "$CMUXD_REMOTE" "$STAGING/cmuxd-remote"
-cp "$AGENT_BROWSER" "$STAGING/agent-browser"
+if [[ "$INCLUDE_AGENT_BROWSER" == "1" ]]; then
+    cp "$AGENT_BROWSER" "$STAGING/agent-browser"
+fi
 
 # Desktop metadata
 cp "$REPO_ROOT/packaging/desktop/com.cmux_lx.terminal.desktop" "$STAGING/"
@@ -73,11 +88,15 @@ done
 cp "$REPO_ROOT/packaging/CLAUDE.md" "$STAGING/CLAUDE.md"
 
 # Build the RPM
-rpmbuild -bb \
-    --define "_cmux_version ${VERSION}" \
-    --define "_sourcedir ${STAGING}" \
-    --define "_topdir ${BUILD_DIR}/rpmbuild" \
-    "$REPO_ROOT/packaging/rpm/cmux.spec"
+RPM_DEFINES=(
+    --define "_cmux_version ${VERSION}"
+    --define "_sourcedir ${STAGING}"
+    --define "_topdir ${BUILD_DIR}/rpmbuild"
+)
+if [[ "$INCLUDE_AGENT_BROWSER" == "1" ]]; then
+    RPM_DEFINES+=(--define "with_agent_browser 1")
+fi
+rpmbuild -bb "${RPM_DEFINES[@]}" "$REPO_ROOT/packaging/rpm/cmux.spec"
 
 # Copy output to dist/
 RPM_FILE=$(find "$BUILD_DIR/rpmbuild/RPMS" -name "*.rpm" | head -1)
