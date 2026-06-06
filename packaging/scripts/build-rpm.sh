@@ -89,6 +89,9 @@ done
 # Package CLAUDE.md (D-14)
 cp "$REPO_ROOT/packaging/CLAUDE.md" "$STAGING/CLAUDE.md"
 
+# Phase D: bundled-chromium installer script
+cp "$REPO_ROOT/scripts/install-chromium.sh" "$STAGING/install-chromium.sh"
+
 # Build the RPM
 RPM_DEFINES=(
     --define "_cmux_version ${VERSION}"

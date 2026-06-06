@@ -66,6 +66,9 @@ done
 # CLAUDE.md
 install -Dm0644 %{_sourcedir}/CLAUDE.md %{buildroot}%{_datadir}/cmux/CLAUDE.md
 
+# Phase D: bundled-chromium installer script
+install -Dm0755 %{_sourcedir}/install-chromium.sh %{buildroot}%{_datadir}/cmux/scripts/install-chromium.sh
+
 %files
 %{_bindir}/cmux-app
 %{_bindir}/cmux-app.bin
@@ -87,3 +90,4 @@ install -Dm0644 %{_sourcedir}/CLAUDE.md %{buildroot}%{_datadir}/cmux/CLAUDE.md
 %{_mandir}/man1/cmux.1.gz
 %{_datadir}/cmux/CLAUDE.md
 %{_datadir}/cmux/skills/
+%{_datadir}/cmux/scripts/install-chromium.sh

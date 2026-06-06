@@ -14,6 +14,7 @@ mod session;
 mod ssh;
 mod config;
 mod browser;
+mod browser_settings;
 mod menus;
 mod header_bar;
 mod ssh_hosts;
@@ -313,6 +314,7 @@ fn build_ui(
         ghostty_app,
         app.clone(),
     );
+    state.borrow_mut().chromium_path_override = config.browser.chromium_path.clone();
 
     // Wire sidebar click-to-switch.
     crate::sidebar::wire_sidebar_clicks(&sidebar_list, state.clone());

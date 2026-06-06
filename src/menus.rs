@@ -123,6 +123,75 @@ pub fn register_actions(
     action.set_enabled(false);
     window.add_action(&action);
 
+    // win.browser-settings (Phase D) -- GUI dialog to override the Chromium
+    // binary that the browser preview pane spawns.
+    let action = gio::SimpleAction::new("browser-settings", None);
+    action.connect_activate({
+        let state = state.clone();
+        let window_for_dialog = window.clone();
+        move |_, _| {
+            crate::browser_settings::show_dialog(&window_for_dialog, state.clone());
+        }
+    });
+    window.add_action(&action);
+
+    // win.download-chromium (Phase D) -- run scripts/install-chromium.sh in a
+    // terminal so the user sees the progress bar. Best-effort: spawns
+    // $TERMINAL if set, otherwise xterm/gnome-terminal/kitty/alacritty.
+    let action = gio::SimpleAction::new("download-chromium", None);
+    action.connect_activate(move |_, _| {
+        let script = std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|d| d.to_path_buf()))
+            .map(|d| d.join("../scripts/install-chromium.sh"))
+            .filter(|p| p.is_file())
+            .or_else(|| {
+                let candidate =
+                    std::path::PathBuf::from("/usr/share/cmux/scripts/install-chromium.sh");
+                if candidate.is_file() {
+                    Some(candidate)
+                } else {
+                    None
+                }
+            });
+        let Some(script) = script else {
+            eprintln!("cmux: install-chromium.sh not found alongside the cmux binary");
+            return;
+        };
+        let term = std::env::var("TERMINAL").ok().filter(|s| !s.is_empty());
+        let try_terms: Vec<String> = term
+            .into_iter()
+            .chain(
+                [
+                    "kitty",
+                    "alacritty",
+                    "wezterm",
+                    "foot",
+                    "gnome-terminal",
+                    "xterm",
+                ]
+                .iter()
+                .map(|s| s.to_string()),
+            )
+            .collect();
+        for t in try_terms {
+            if which_in_path(&t).is_some() {
+                let _ = std::process::Command::new(&t)
+                    .arg("-e")
+                    .arg("bash")
+                    .arg("-lc")
+                    .arg(format!("{} ; echo ; read -p 'Press Enter to close…' _", script.display()))
+                    .spawn();
+                return;
+            }
+        }
+        eprintln!(
+            "cmux: no terminal emulator found; run manually: bash {}",
+            script.display()
+        );
+    });
+    window.add_action(&action);
+
     // win.preferences (D-13) -- open config.toml in $EDITOR
     let action = gio::SimpleAction::new("preferences", None);
     action.connect_activate(move |_, _| {
@@ -292,6 +361,8 @@ pub fn build_hamburger_menu() -> gio::Menu {
     edit_section.append(Some("Copy"), Some("win.copy"));
     edit_section.append(Some("Paste"), Some("win.paste"));
     edit_section.append(Some("Find"), Some("win.find"));
+    edit_section.append(Some("Browser Settings…"), Some("win.browser-settings"));
+    edit_section.append(Some("Download Bundled Chromium…"), Some("win.download-chromium"));
     edit_section.append(Some("Preferences"), Some("win.preferences"));
     menu.append_section(Some("Edit"), &edit_section);
 
@@ -446,4 +517,16 @@ fn shortcut(accel: &str, title: &str) -> gtk4::ShortcutsShortcut {
         .accelerator(accel)
         .title(title)
         .build()
+}
+
+/// Return the first absolute path to `name` found on `$PATH`, if any.
+fn which_in_path(name: &str) -> Option<std::path::PathBuf> {
+    let path_var = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path_var) {
+        let candidate = dir.join(name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
 }

@@ -26,6 +26,11 @@ pub struct BrowserManager {
     stream_task: Option<tokio::task::JoinHandle<()>>,
     pub frame_tx: Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>,
     pub preview_state: PreviewState,
+    /// Resolved Chromium executable path. Computed once at construction from
+    /// the config's `chromium_path` override → bundled
+    /// `~/.local/share/cmux/chromium/chrome` → first hit on `$PATH`. None
+    /// means "let agent-browser do its own discovery" (legacy behaviour).
+    chromium_path: Option<PathBuf>,
 }
 
 impl BrowserManager {
@@ -36,7 +41,27 @@ impl BrowserManager {
             stream_task: None,
             frame_tx: None,
             preview_state: PreviewState::Empty,
+            chromium_path: resolve_chromium_path(None),
         }
+    }
+
+    /// Construct a BrowserManager honoring an explicit config-supplied path.
+    /// Falls back to the same discovery chain as `new()` when `path` is None.
+    pub fn with_config_path(path: Option<&str>) -> Self {
+        BrowserManager {
+            daemon_process: None,
+            session_name: SESSION_NAME.to_string(),
+            stream_task: None,
+            frame_tx: None,
+            preview_state: PreviewState::Empty,
+            chromium_path: resolve_chromium_path(path),
+        }
+    }
+
+    /// Currently-resolved Chromium binary, if any. Mainly for Settings/about
+    /// dialogs to surface "Browser is using …".
+    pub fn chromium_path(&self) -> Option<&std::path::Path> {
+        self.chromium_path.as_deref()
     }
 
     /// Mirrors agent-browser/cli/src/connection.rs socket dir discovery.
@@ -95,13 +120,19 @@ impl BrowserManager {
         std::fs::create_dir_all(&socket_dir)
             .map_err(|e| format!("Failed to create socket dir {}: {}", socket_dir.display(), e))?;
 
-        let child = Command::new(&binary_path)
-            .env("AGENT_BROWSER_DAEMON", "1")
+        let mut cmd = Command::new(&binary_path);
+        cmd.env("AGENT_BROWSER_DAEMON", "1")
             .env("AGENT_BROWSER_SESSION", &self.session_name)
             .env("AGENT_BROWSER_STREAM_PORT", "0")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+        // Forward the resolved Chromium binary to agent-browser via the
+        // documented env hook (agent-browser/cli/src/flags.rs line ~423).
+        if let Some(ref path) = self.chromium_path {
+            cmd.env("AGENT_BROWSER_EXECUTABLE_PATH", path);
+        }
+        let child = cmd
             .spawn()
             .map_err(|e| format!("Failed to spawn agent-browser: {}", e))?;
 
@@ -461,6 +492,73 @@ pub fn spawn_motion_forwarder(
         }
     });
     tx
+}
+
+/// Standard install location for a cmux-bundled Chromium.
+/// Mirrors $XDG_DATA_HOME/cmux/chromium/chrome with a $HOME fallback.
+pub fn bundled_chromium_path() -> PathBuf {
+    let base = std::env::var("XDG_DATA_HOME")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".local/share")))
+        .unwrap_or_else(|| PathBuf::from("/tmp"));
+    base.join("cmux").join("chromium").join("chrome")
+}
+
+/// Resolve the Chromium executable cmux should hand to agent-browser.
+///
+/// Order:
+///   1. Explicit override from `[browser].chromium_path` in config.toml.
+///   2. cmux-bundled binary at `$XDG_DATA_HOME/cmux/chromium/chrome`.
+///   3. First hit on `$PATH` for `chromium` / `chromium-browser` / `google-chrome` / `chrome`.
+///   4. Flatpak wrappers under `/var/lib/flatpak/exports/bin/`.
+///   5. None — let agent-browser do its own discovery and fail loudly.
+fn resolve_chromium_path(config_override: Option<&str>) -> Option<PathBuf> {
+    if let Some(p) = config_override.filter(|s| !s.is_empty()) {
+        let pb = PathBuf::from(p);
+        if pb.is_file() {
+            return Some(pb);
+        }
+        eprintln!(
+            "cmux: chromium_path '{}' from config does not exist; ignoring and falling back",
+            p,
+        );
+    }
+
+    let bundled = bundled_chromium_path();
+    if bundled.is_file() {
+        return Some(bundled);
+    }
+
+    let path_var = std::env::var("PATH").unwrap_or_default();
+    for name in [
+        "chromium",
+        "chromium-browser",
+        "google-chrome",
+        "google-chrome-stable",
+        "chrome",
+    ] {
+        for dir in path_var.split(':') {
+            let candidate = PathBuf::from(dir).join(name);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    for flatpak in [
+        "/var/lib/flatpak/exports/bin/com.google.Chrome",
+        "/var/lib/flatpak/exports/bin/org.chromium.Chromium",
+        "/var/lib/flatpak/exports/bin/io.github.ungoogled_software.ungoogled_chromium",
+    ] {
+        let pb = PathBuf::from(flatpak);
+        if pb.is_file() {
+            return Some(pb);
+        }
+    }
+
+    None
 }
 
 /// Find agent-browser binary in PATH or alongside the cmux binary.

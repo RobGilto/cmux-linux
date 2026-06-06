@@ -242,7 +242,10 @@ pub fn handle_browser_open(state: &Rc<RefCell<AppState>>) {
     let socket_path = {
         let mut s = state.borrow_mut();
         if s.browser_manager.is_none() {
-            s.browser_manager = Some(crate::browser::BrowserManager::new());
+            let override_path = s.chromium_path_override.clone();
+            s.browser_manager = Some(crate::browser::BrowserManager::with_config_path(
+                override_path.as_deref(),
+            ));
         }
         let bm = s.browser_manager.as_mut().unwrap();
         if let Err(e) = bm.spawn_daemon_child_if_needed() {

@@ -91,6 +91,12 @@ done
 # Package CLAUDE.md (D-14)
 install -Dm0644 "$REPO_ROOT/packaging/CLAUDE.md" "$PKG_ROOT/usr/share/cmux/CLAUDE.md"
 
+# Phase D: bundled-chromium installer script. Lets the "Download Bundled
+# Chromium…" menu action run a self-contained installer at
+# /usr/share/cmux/scripts/install-chromium.sh.
+install -Dm0755 "$REPO_ROOT/scripts/install-chromium.sh" \
+    "$PKG_ROOT/usr/share/cmux/scripts/install-chromium.sh"
+
 # DEBIAN/control
 mkdir -p "$PKG_ROOT/DEBIAN"
 cat > "$PKG_ROOT/DEBIAN/control" << CTRL

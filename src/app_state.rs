@@ -41,6 +41,10 @@ pub struct AppState {
     pub workspace_bridges: std::collections::HashMap<u64, std::sync::Arc<crate::ssh::bridge::SshBridge>>,
     /// Browser preview daemon manager (Phase 8).
     pub browser_manager: Option<crate::browser::BrowserManager>,
+    /// Optional Chromium binary path override read from
+    /// `[browser].chromium_path` in config.toml. Forwarded to every
+    /// `BrowserManager` we create so spawn picks the right Chrome.
+    pub chromium_path_override: Option<String>,
     /// Next browser surface short-ref counter (monotonically increasing, per D-06).
     pub browser_surface_counter: u32,
     /// Maps short-ref ID -> surface UUID (lost on restart, per D-06).
@@ -74,6 +78,7 @@ impl AppState {
             remote_pane_contexts: std::collections::HashMap::new(),
             workspace_bridges: std::collections::HashMap::new(),
             browser_manager: None,
+            chromium_path_override: None,
             browser_surface_counter: 0,
             browser_surface_refs: std::collections::HashMap::new(),
         };
