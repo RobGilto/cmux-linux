@@ -103,6 +103,16 @@ exist on both ports, see the upstream changelog for macOS history.
   reaches `set_focus(true)` on the first surface instead of dying with
   `FATAL — ghostty_surface_new returned null`.
 
+- **`must_draw_from_app_thread=true` for the embedded apprt on Linux.**
+  The renderer worker thread otherwise calls `drawFrame` directly; on
+  Linux the GtkGLArea's GdkGLContext is bound only on the GTK main
+  thread, so the renderer thread hits unresolved GL function pointers
+  and `SIGSEGV`s at frame 0. With this declaration the renderer mails
+  `redraw_surface` back to the app loop, which dispatches `.render`
+  through `action_cb`, which `queue_render`s on the main thread. After
+  this fix `cmux-app` reaches a steady-state render loop instead of
+  crashing right after `ghostty_surface_new` succeeded.
+
 - **`agent-browser` daemon is back in the workspace.** Added
   [`vercel-labs/agent-browser`](https://github.com/vercel-labs/agent-browser)
   as a git submodule at `agent-browser/`. The `agent-browser/cli` crate is
