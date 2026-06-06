@@ -6,62 +6,27 @@ fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
     let ghostty_lib_path = format!("{}/ghostty/zig-out/lib", manifest_dir);
 
-    // Static link pre-built libghostty.a (built by scripts/setup-linux.sh)
-    // Use absolute path to ensure it's found
+    // Static link pre-built ghostty-internal.a (built by scripts/setup-linux.sh).
+    // Upstream renamed the artifact from libghostty.a to ghostty-internal.a
+    // when libghostty-vt was split off; the embedded API still lives here.
+    // The file is emitted without the standard `lib` prefix, so pass the full
+    // path to the linker rather than relying on the -lNAME search convention.
     println!("cargo:rustc-link-search=native={}", ghostty_lib_path);
-    println!("cargo:rustc-link-lib=static=ghostty");
+    println!("cargo:rustc-link-arg={}/ghostty-internal.a", ghostty_lib_path);
 
-    // Link simdutf object file that ghostty depends on.
-    // Find the most recent simdutf.o in zig-cache (hash changes on rebuild).
-    let zig_cache = format!("{}/ghostty/.zig-cache/o", manifest_dir);
-    if let Ok(entries) = std::fs::read_dir(&zig_cache) {
-        let mut simdutf_path = None;
-        let mut newest_mtime = std::time::SystemTime::UNIX_EPOCH;
-        for entry in entries.flatten() {
-            let candidate = entry.path().join("simdutf.o");
-            if candidate.exists() {
-                if let Ok(meta) = candidate.metadata() {
-                    if let Ok(mtime) = meta.modified() {
-                        if mtime > newest_mtime {
-                            newest_mtime = mtime;
-                            simdutf_path = Some(candidate);
-                        }
-                    }
-                }
-            }
-        }
-        if let Some(path) = simdutf_path {
-            println!("cargo:rustc-link-arg={}", path.display());
-        }
-    }
+    // Note: ghostty-internal.a is a CombinedArchive that already bundles
+    // simdutf.o and libhighway.a. The fork's earlier build.rs linked them
+    // separately to chase AVX-512 SIGILL issues on older CPUs; with the
+    // combined archive that produces duplicate-symbol link errors.
+    // If a future ghostty refactor splits these back out, restore the
+    // mtime-tracking lookup in the zig-cache here.
 
-    // Link Highway SIMD library that libghostty depends on (for runtime CPU dispatch)
-    // Find the most recent libhighway.a in zig-cache
-    let zig_cache = format!("{}/ghostty/.zig-cache/o", manifest_dir);
-    if let Ok(entries) = std::fs::read_dir(&zig_cache) {
-        let mut highway_path = None;
-        let mut newest_mtime = std::time::SystemTime::UNIX_EPOCH;
-        for entry in entries.flatten() {
-            let candidate = entry.path().join("libhighway.a");
-            if candidate.exists() {
-                if let Ok(meta) = candidate.metadata() {
-                    if let Ok(mtime) = meta.modified() {
-                        if mtime > newest_mtime {
-                            newest_mtime = mtime;
-                            highway_path = Some(candidate);
-                        }
-                    }
-                }
-            }
-        }
-        if let Some(path) = highway_path {
-            println!("cargo:rustc-link-search=native={}", path.parent().unwrap().display());
-            println!("cargo:rustc-link-lib=static=highway");
-        }
-    }
-
-    // Link stub object file to satisfy undefined symbols from missing libraries (use absolute path)
-    println!("cargo:rustc-link-arg={}/stubs.o", manifest_dir);
+    // The legacy `stubs.o` (and its source `stubs.c`) provided empty no-op
+    // implementations of glslang_*, spvc_*, and dcimgui symbols back when
+    // ghostty exposed them as unresolved externs. The combined ghostty-internal
+    // archive now ships real implementations, so linking stubs.o produces
+    // duplicate-symbol errors. Keep the source file in tree for now in case a
+    // future ghostty build configuration drops these deps again.
 
     // Link the GLAD loader object file — provides gladLoaderLoadGLContext and
     // gladLoaderUnloadGLContext which are needed by ghostty's OpenGL renderer.
@@ -71,10 +36,18 @@ fn main() {
     println!("cargo:rerun-if-changed=ghostty/vendor/glad/src/gl.c");
     println!("cargo:rerun-if-changed=ghostty/vendor/glad/include/glad/gl.h");
 
-    // libghostty.a requires these system libraries at link time
+    // ghostty-internal.a requires these system libraries at link time.
+    //
+    // C++ ABI: zig builds the bundled C++ deps (glslang, dcimgui, SPIRV-Cross)
+    // against libc++, NOT libstdc++ — symbols are in `std::__1::*`. Linking the
+    // GNU libstdc++ ABI here produces "vtable / method not found" errors.
+    // Resolve by pulling in LLVM's libc++ + libc++abi. On Debian/Ubuntu these
+    // come from `libc++-dev libc++abi-dev`; on Fedora from
+    // `libcxx-devel libcxxabi-devel`.
     println!("cargo:rustc-link-lib=dylib=GL");
-    println!("cargo:rustc-link-lib=dylib=stdc++");
-    println!("cargo:rustc-link-lib=dylib=gcc_s"); // For __gxx_personality_v0
+    println!("cargo:rustc-link-lib=dylib=c++");
+    println!("cargo:rustc-link-lib=dylib=c++abi");
+    println!("cargo:rustc-link-lib=dylib=gcc_s"); // unwind helpers shared with libc++abi
     println!("cargo:rustc-link-lib=dylib=fontconfig");
     println!("cargo:rustc-link-lib=dylib=freetype");
 

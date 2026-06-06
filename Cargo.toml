@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "agent-browser/cli"]
+members = ["."]
 
 [package]
 name = "cmux-linux"

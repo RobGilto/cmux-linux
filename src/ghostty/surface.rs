@@ -117,9 +117,15 @@ pub fn create_surface(
                 // Reinitialize renderer GL resources (shaders, swap chain) for the
                 // new GL context. This matches Ghostty's own GTK apprt glareaRealize
                 // which calls displayRealized() after reparent/display-move.
-                unsafe {
-                    ffi::ghostty_surface_display_realized(existing_surface);
-                }
+                //
+                // TODO(cmux-linux): the `ghostty_surface_display_realized` C export was
+                // dropped when the pinned manaflow-ai/ghostty SHA (4845e82d) became
+                // unreachable. The underlying renderer.displayRealized() still exists
+                // inside ghostty's GTK apprt but is no longer exposed through the
+                // embedded API. Skipping the call degrades pane reparent / display-move
+                // (the renderer may keep stale GL resources after move-to-another-monitor)
+                // but lets the rest of the surface lifecycle work. Re-add an export to
+                // ghostty/src/apprt/embedded.zig once we pin a fresh fork SHA in Phase C.
                 let scale = area.scale_factor() as f64;
                 let w = area.width();
                 let h = area.height();
@@ -267,12 +273,14 @@ pub fn create_surface(
             // Make GL context current so Ghostty can properly free GL objects.
             area.make_current();
             if let Some(surface) = *cell_unrealize.borrow() {
-                unsafe {
-                    ffi::ghostty_surface_display_unrealized(surface);
-                }
+                // TODO(cmux-linux): paired with the display_realized comment in
+                // create_surface(). The `ghostty_surface_display_unrealized`
+                // export is missing from current ghostty; skipping it leaks the
+                // GL resources held by ghostty's renderer until the surface is
+                // freed. Re-add the export in Phase C and restore this call.
+                let _ = surface;
                 eprintln!(
-                    "cmux: display_unrealized called for surface {:p}",
-                    surface
+                    "cmux: display_unrealized skipped (export missing in current ghostty)",
                 );
             }
         });

@@ -41,11 +41,24 @@ sudo rpm -i cmux-0.1.0-1.x86_64.rpm
 ### Build from source
 
 ```bash
-# Prerequisites: Rust toolchain, GTK4 dev libraries, Zig 0.15.2 (for libghostty)
-./scripts/setup.sh          # init submodules, build GhosttyKit
+# Prerequisites:
+#   - Rust toolchain (rustup)
+#   - Zig 0.15.2 (mise/asdf, or download from ziglang.org)
+#   - GTK4 + libclang dev headers
+#       Debian/Ubuntu:  sudo apt-get install libgtk-4-dev libclang-dev
+#       Fedora/RHEL:    sudo dnf install gtk4-devel clang-devel
+#       Arch:           sudo pacman -S gtk4 clang
+#
+git submodule update --init ghostty           # the Linux build only needs ghostty
+./scripts/setup-linux.sh                      # builds ghostty-internal.a
 cargo build --release --bin cmux --bin cmux-app
-cargo build --release -p agent-browser
+./scripts/install-cmuxd-remote.sh             # builds + installs cmuxd-remote SSH helper
 ```
+
+> The `agent-browser` daemon ships as a separate binary. Until the source crate is
+> re-included in this repo, download or build it from
+> [vercel-labs/agent-browser](https://github.com/vercel-labs/agent-browser) and
+> place it on `$PATH` or under `~/.local/share/cmux/bin/agent-browser`.
 
 ## Browser Automation
 

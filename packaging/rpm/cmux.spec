@@ -2,7 +2,7 @@ Name:           cmux
 Version:        %{_cmux_version}
 Release:        1%{?dist}
 Summary:        GPU-accelerated terminal multiplexer
-License:        Proprietary
+License:        AGPL-3.0-or-later
 URL:            https://cmux.dev
 
 # Pre-built binary package -- no Source0, no %build
