@@ -232,14 +232,43 @@ fn build_ui(
         ghostty_app
     };
 
+    let display = gtk4::gdk::Display::default().expect("no display");
+
     // 2. Load CSS
     let provider = CssProvider::new();
     provider.load_from_data(APP_CSS);
     gtk4::style_context_add_provider_for_display(
-        &gtk4::gdk::Display::default().expect("no display"),
+        &display,
         &provider,
         gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
+
+    // 2b. Ensure header-bar icons resolve even when the active GTK icon
+    // theme is non-GNOME (KDE Breeze on Hyprland/KDE only ships a subset
+    // of the freedesktop symbolic names cmux uses — e.g. tab-new-symbolic,
+    // web-browser-symbolic, sidebar-show-symbolic). Force Adwaita as the
+    // fallback theme so the missing names resolve from /usr/share/icons/Adwaita.
+    {
+        use gtk4::prelude::*;
+        let icon_theme = gtk4::IconTheme::for_display(&display);
+        let mut search_path = icon_theme.search_path();
+        let adwaita = std::path::PathBuf::from("/usr/share/icons/Adwaita");
+        if adwaita.exists() && !search_path.iter().any(|p| p == &adwaita) {
+            search_path.push(adwaita);
+            icon_theme.set_search_path(
+                &search_path.iter().map(|p| p.as_path()).collect::<Vec<_>>(),
+            );
+        }
+        // Adwaita Legacy carries the older `web-browser-symbolic` entry
+        // that newer freedesktop themes moved into `legacy/`.
+        let legacy = std::path::PathBuf::from("/usr/share/icons/AdwaitaLegacy");
+        if legacy.exists() && !search_path.iter().any(|p| p == &legacy) {
+            search_path.push(legacy);
+            icon_theme.set_search_path(
+                &search_path.iter().map(|p| p.as_path()).collect::<Vec<_>>(),
+            );
+        }
+    }
 
     // 3. Build the window layout
     let window = ApplicationWindow::builder()
