@@ -163,8 +163,18 @@ pub fn show_dialog(parent: &gtk4::ApplicationWindow, state: Rc<RefCell<AppState>
 }
 
 /// Persist the chromium-path override to `~/.config/cmux/config.toml`.
-/// Uses a minimal read-merge-write because we want to preserve any other
-/// sections the user already authored (shortcuts, ui, …).
+///
+/// Reads the existing file, replaces (or removes) the `chromium_path` line
+/// inside the `[browser]` section, and writes the result back. If no
+/// `[browser]` section exists, one is appended at EOF. If the section
+/// exists but contains no `chromium_path` line, the new line is inserted
+/// **immediately after the section header** so we don't accidentally
+/// append it under a later section that follows `[browser]`.
+///
+/// Atomic write via a sibling temp file + `rename`. The temp file inherits
+/// the parent directory's perms; `fs::write` would otherwise create the
+/// real file with `mode=0666 & ~umask` and a brief truncated state where
+/// a concurrent reader could see an empty config.
 fn persist_chromium_path(new_value: Option<&str>) -> std::io::Result<()> {
     let path = crate::config::config_path();
     if let Some(parent) = path.parent() {
@@ -172,47 +182,109 @@ fn persist_chromium_path(new_value: Option<&str>) -> std::io::Result<()> {
     }
     let existing = std::fs::read_to_string(&path).unwrap_or_default();
 
-    // Strip any prior `chromium_path` line under `[browser]` so we don't
-    // emit duplicates. Cheap line filter, not a full TOML rewrite.
     let mut out = String::new();
     let mut in_browser_section = false;
     let mut wrote_replacement = false;
+
+    // Closure: emit the chromium_path line once. No-op if already written
+    // or if new_value is None (the user cleared the override).
+    let emit = |out: &mut String, wrote: &mut bool| {
+        if *wrote {
+            return;
+        }
+        if let Some(value) = new_value {
+            out.push_str(&format!(
+                "chromium_path = \"{}\"\n",
+                escape_toml(value)
+            ));
+            *wrote = true;
+        }
+    };
+
     for line in existing.lines() {
         let trimmed = line.trim();
+
+        // Section header: detect [browser] entry/exit. When we're LEAVING
+        // an open [browser] section without having written the key, inject
+        // the line right before the new header. This handles the
+        // empty-[browser]-then-[other] case where the section had no
+        // entries to anchor an in-loop insertion.
         if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            if in_browser_section && !wrote_replacement {
+                emit(&mut out, &mut wrote_replacement);
+            }
             in_browser_section = trimmed == "[browser]";
             out.push_str(line);
             out.push('\n');
             continue;
         }
-        if in_browser_section
-            && trimmed.starts_with("chromium_path")
-            && trimmed.contains('=')
-        {
-            if let Some(value) = new_value {
-                out.push_str(&format!("chromium_path = \"{}\"\n", escape_toml(value)));
-                wrote_replacement = true;
-            }
-            // else: drop the line (clearing the override).
+
+        // Existing chromium_path inside [browser]: replace (or drop if
+        // new_value is None — clearing the override).
+        if in_browser_section && is_chromium_path_key(trimmed) {
+            emit(&mut out, &mut wrote_replacement);
             continue;
         }
+
         out.push_str(line);
         out.push('\n');
     }
 
+    // EOF inside [browser] section that never had a chromium_path entry.
+    if in_browser_section && !wrote_replacement {
+        emit(&mut out, &mut wrote_replacement);
+    }
+
+    // No [browser] section anywhere in the file.
     if !wrote_replacement {
         if let Some(value) = new_value {
-            if !out.contains("[browser]") {
-                if !out.is_empty() && !out.ends_with('\n') {
-                    out.push('\n');
-                }
-                out.push_str("\n[browser]\n");
+            if !out.is_empty() && !out.ends_with('\n') {
+                out.push('\n');
             }
-            out.push_str(&format!("chromium_path = \"{}\"\n", escape_toml(value)));
+            out.push_str("\n[browser]\nchromium_path = \"");
+            out.push_str(&escape_toml(value));
+            out.push_str("\"\n");
         }
     }
 
-    std::fs::write(&path, out)
+    write_atomic(&path, out.as_bytes())
+}
+
+/// Return true iff the trimmed line is exactly `chromium_path` followed by
+/// optional whitespace and an `=`. Prevents `chromium_path_extra` and
+/// `chromium_pathfinder` from being silently dropped by the rewrite.
+fn is_chromium_path_key(trimmed: &str) -> bool {
+    let rest = match trimmed.strip_prefix("chromium_path") {
+        Some(r) => r,
+        None => return false,
+    };
+    let rest = rest.trim_start();
+    rest.starts_with('=')
+}
+
+/// Atomic write via temp-file + rename. Preserves the existing file's
+/// permission bits so users who `chmod 0600` their config.toml to keep
+/// secrets out of group/world read don't silently lose that protection
+/// after a settings save.
+fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let tmp = parent.join(format!(
+        ".{}.cmux-settings.{}.tmp",
+        path.file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("config"),
+        std::process::id()
+    ));
+    std::fs::write(&tmp, bytes)?;
+    if let Ok(meta) = std::fs::metadata(path) {
+        let _ = std::fs::set_permissions(&tmp, meta.permissions());
+    }
+    if let Err(e) = std::fs::rename(&tmp, path) {
+        // Best-effort: leave no orphan .tmp lying around next to the user's config.
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    Ok(())
 }
 
 fn escape_toml(s: &str) -> String {

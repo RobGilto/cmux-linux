@@ -237,8 +237,10 @@ pub fn handle_focus_direction(state: &Rc<RefCell<AppState>>, direction: FocusDir
 /// thread via `glib::MainContext::spawn_local` and wire the pane's stream
 /// + input controllers there.
 pub fn handle_browser_open(state: &Rc<RefCell<AppState>>) {
-    // Step 1 (sync, main thread): create BrowserManager if missing, spawn the
-    // daemon child if needed, snapshot the socket path for the worker.
+    // Step 1 (sync, main thread): create BrowserManager if missing, guard
+    // against rapid double-fire (Ctrl+Shift+B twice while the bootstrap
+    // worker is still running), spawn the daemon child if needed, snapshot
+    // the socket path for the worker.
     let socket_path = {
         let mut s = state.borrow_mut();
         if s.browser_manager.is_none() {
@@ -248,6 +250,15 @@ pub fn handle_browser_open(state: &Rc<RefCell<AppState>>) {
             ));
         }
         let bm = s.browser_manager.as_mut().unwrap();
+        // Re-entry guard. Without this, two rapid clicks on "New Browser"
+        // race two bootstrap workers against the same daemon socket: each
+        // sends `launch` + `navigate(about:blank)` + `screencast_start`,
+        // restarting Chrome under the first pane and clobbering the stream
+        // task (start_stream overwrites the JoinHandle without aborting).
+        if matches!(bm.preview_state, crate::browser::PreviewState::Loading) {
+            eprintln!("cmux: browser.open ignored — another bootstrap is in flight");
+            return;
+        }
         if let Err(e) = bm.spawn_daemon_child_if_needed() {
             eprintln!("cmux: browser.open failed to spawn daemon: {e}");
             return;
@@ -298,9 +309,20 @@ pub fn handle_browser_open(state: &Rc<RefCell<AppState>>) {
             }
             Ok(Err(e)) => {
                 eprintln!("cmux: browser.open bootstrap failed: {e}");
+                if let Some(bm) = state_for_wire.borrow_mut().browser_manager.as_mut() {
+                    // Tear down the hung daemon so the next attempt can
+                    // re-spawn. Without this, daemon_process stays Some
+                    // pointing at a child that's no longer answering, and
+                    // every retry waits 10s polling the dead socket again.
+                    bm.shutdown();
+                    bm.preview_state = crate::browser::PreviewState::Error(e);
+                }
             }
             Err(_) => {
                 eprintln!("cmux: browser.open worker dropped before completion");
+                if let Some(bm) = state_for_wire.borrow_mut().browser_manager.as_mut() {
+                    bm.preview_state = crate::browser::PreviewState::Empty;
+                }
             }
         }
     });
@@ -317,6 +339,22 @@ fn wire_browser_pane(
     let url_entry = widgets.url_entry.clone();
     let picture_ref = picture.clone();
 
+    // Snapshot the socket path and tokio runtime handle up front so the
+    // button handlers can fire `send_command_to` on `runtime.spawn_blocking`
+    // instead of running the synchronous UnixStream round-trip on the GTK
+    // main thread. Before this refactor every nav button froze the UI for
+    // the duration of one daemon round-trip — adversarial round 1 found
+    // this re-introduced the Phase D freeze.
+    let (socket_path, runtime_handle) = {
+        let s = state.borrow();
+        let socket_path = s
+            .browser_manager
+            .as_ref()
+            .map(|bm| bm.daemon_socket_path())
+            .unwrap_or_default();
+        (socket_path, s.runtime_handle.clone())
+    };
+
     // Step 3: Start WebSocket stream to pipe frames to Picture widget
     {
         let mut s = state.borrow_mut();
@@ -329,39 +367,92 @@ fn wire_browser_pane(
         }
     } // drop borrow
 
+    // Helpers: dispatch send_command calls onto the tokio blocking pool so
+    // the GTK main thread is never blocked on the daemon UnixStream.
+    //
+    // `dispatch_nav` runs ONE command. `dispatch_nav_seq` runs N commands
+    // sequentially inside a SINGLE spawn_blocking task — the latter
+    // preserves ordering for dependent pairs (viewport→navigate,
+    // mousePressed→mouseReleased) which would otherwise race because
+    // tokio's blocking pool gives no FIFO guarantee across separate
+    // spawn_blocking calls.
+    fn dispatch_nav(
+        runtime: Option<&tokio::runtime::Handle>,
+        socket_path: std::path::PathBuf,
+        action: &'static str,
+        params: serde_json::Value,
+    ) {
+        dispatch_nav_seq(runtime, socket_path, vec![(action, params)]);
+    }
+
+    fn dispatch_nav_seq(
+        runtime: Option<&tokio::runtime::Handle>,
+        socket_path: std::path::PathBuf,
+        steps: Vec<(&'static str, serde_json::Value)>,
+    ) {
+        if steps.is_empty() {
+            return;
+        }
+        if let Some(rt) = runtime {
+            rt.spawn_blocking(move || {
+                for (action, params) in steps {
+                    if let Err(e) =
+                        crate::browser::send_command_to(&socket_path, action, params)
+                    {
+                        eprintln!("cmux: nav {action} failed: {e}");
+                        // Bail on first failure — later commands likely
+                        // depended on the earlier one (viewport before
+                        // navigate, press before release).
+                        return;
+                    }
+                }
+            });
+        }
+    }
+
     // Step 3b: Wire nav button signals (D-06, D-07)
     {
         // Back button
-        let state_for_back = state.clone();
+        let socket_for_back = socket_path.clone();
+        let runtime_for_back = runtime_handle.clone();
         widgets.back_btn.connect_clicked(move |_| {
-            let s = state_for_back.borrow();
-            if let Some(ref bm) = s.browser_manager {
-                let _ = bm.send_command("back", serde_json::json!({}));
-            }
+            dispatch_nav(
+                runtime_for_back.as_ref(),
+                socket_for_back.clone(),
+                "back",
+                serde_json::json!({}),
+            );
         });
 
         // Forward button
-        let state_for_fwd = state.clone();
+        let socket_for_fwd = socket_path.clone();
+        let runtime_for_fwd = runtime_handle.clone();
         widgets.forward_btn.connect_clicked(move |_| {
-            let s = state_for_fwd.borrow();
-            if let Some(ref bm) = s.browser_manager {
-                let _ = bm.send_command("forward", serde_json::json!({}));
-            }
+            dispatch_nav(
+                runtime_for_fwd.as_ref(),
+                socket_for_fwd.clone(),
+                "forward",
+                serde_json::json!({}),
+            );
         });
 
         // Reload button
-        let state_for_reload = state.clone();
+        let socket_for_reload = socket_path.clone();
+        let runtime_for_reload = runtime_handle.clone();
         widgets.reload_btn.connect_clicked(move |_| {
-            let s = state_for_reload.borrow();
-            if let Some(ref bm) = s.browser_manager {
-                let _ = bm.send_command("reload", serde_json::json!({}));
-            }
+            dispatch_nav(
+                runtime_for_reload.as_ref(),
+                socket_for_reload.clone(),
+                "reload",
+                serde_json::json!({}),
+            );
         });
 
         // Go button: reads URL entry, auto-prepends https://, navigates
-        let state_for_go = state.clone();
         let url_entry_for_go = url_entry.clone();
         let picture_for_go = picture_ref.clone();
+        let socket_for_go = socket_path.clone();
+        let runtime_for_go = runtime_handle.clone();
         widgets.go_btn.connect_clicked(move |_| {
             let raw_url = url_entry_for_go.text().to_string();
             if raw_url.is_empty() {
@@ -369,15 +460,17 @@ fn wire_browser_pane(
             }
             let url = if raw_url.contains("://") { raw_url } else { format!("https://{raw_url}") };
             url_entry_for_go.set_text(&url);
-            let s = state_for_go.borrow();
-            if let Some(ref bm) = s.browser_manager {
-                let w = picture_for_go.width();
-                let h = picture_for_go.height();
-                if w > 0 && h > 0 {
-                    let _ = bm.send_command("viewport", serde_json::json!({"width": w, "height": h}));
-                }
-                let _ = bm.send_command("navigate", serde_json::json!({"url": url}));
+            let w = picture_for_go.width();
+            let h = picture_for_go.height();
+            let mut steps: Vec<(&'static str, serde_json::Value)> = Vec::new();
+            if w > 0 && h > 0 {
+                steps.push((
+                    "viewport",
+                    serde_json::json!({"width": w, "height": h}),
+                ));
             }
+            steps.push(("navigate", serde_json::json!({"url": url})));
+            dispatch_nav_seq(runtime_for_go.as_ref(), socket_for_go.clone(), steps);
         });
     }
 
@@ -396,16 +489,19 @@ fn wire_browser_pane(
 
     // Step 4: Set viewport to match pane size (deferred until after GTK layout)
     {
-        let state_for_viewport = state.clone();
         let picture_for_viewport = picture_ref.clone();
+        let socket_for_viewport = socket_path.clone();
+        let runtime_for_viewport = runtime_handle.clone();
         glib::idle_add_local_once(move || {
             let pic_w = picture_for_viewport.width();
             let pic_h = picture_for_viewport.height();
             if pic_w > 0 && pic_h > 0 {
-                let s = state_for_viewport.borrow();
-                if let Some(ref bm) = s.browser_manager {
-                    let _ = bm.send_command("viewport", serde_json::json!({"width": pic_w, "height": pic_h}));
-                }
+                dispatch_nav(
+                    runtime_for_viewport.as_ref(),
+                    socket_for_viewport,
+                    "viewport",
+                    serde_json::json!({"width": pic_w, "height": pic_h}),
+                );
             }
         });
     }
@@ -413,8 +509,9 @@ fn wire_browser_pane(
     // Attach mouse click controller to the Picture for browser interaction
     {
         let click_ctrl = gtk4::GestureClick::new();
-        let state_for_click = state.clone();
         let picture_for_click = picture_ref.clone();
+        let socket_for_click = socket_path.clone();
+        let runtime_for_click = runtime_handle.clone();
         click_ctrl.connect_released(move |_gesture, _n_press, x, y| {
             // D-09: Grab focus on the container so keyboard events resume flowing to Chrome
             if let Some(parent_box) = picture_for_click.parent()
@@ -438,18 +535,26 @@ fn wire_browser_pane(
             let cx = (x * scale_x) as i64;
             let cy = (y * scale_y) as i64;
 
-            let s = state_for_click.borrow();
-            if let Some(ref bm) = s.browser_manager {
-                // mousePressed + mouseReleased = click
-                let _ = bm.send_command("input_mouse", serde_json::json!({
-                    "type": "mousePressed", "x": cx, "y": cy,
-                    "button": "left", "clickCount": 1
-                }));
-                let _ = bm.send_command("input_mouse", serde_json::json!({
-                    "type": "mouseReleased", "x": cx, "y": cy,
-                    "button": "left", "clickCount": 1
-                }));
-            }
+            dispatch_nav_seq(
+                runtime_for_click.as_ref(),
+                socket_for_click.clone(),
+                vec![
+                    (
+                        "input_mouse",
+                        serde_json::json!({
+                            "type": "mousePressed", "x": cx, "y": cy,
+                            "button": "left", "clickCount": 1
+                        }),
+                    ),
+                    (
+                        "input_mouse",
+                        serde_json::json!({
+                            "type": "mouseReleased", "x": cx, "y": cy,
+                            "button": "left", "clickCount": 1
+                        }),
+                    ),
+                ],
+            );
         });
         picture_ref.add_controller(click_ctrl);
 
@@ -480,8 +585,9 @@ fn wire_browser_pane(
         let scroll_ctrl = gtk4::EventControllerScroll::new(
             gtk4::EventControllerScrollFlags::VERTICAL | gtk4::EventControllerScrollFlags::DISCRETE,
         );
-        let state_for_scroll = state.clone();
         let picture_for_scroll = picture_ref.clone();
+        let socket_for_scroll = socket_path.clone();
+        let runtime_for_scroll = runtime_handle.clone();
         scroll_ctrl.connect_scroll(move |_ctrl, _dx, dy| {
             let pic_w = picture_for_scroll.width() as f64;
             let pic_h = picture_for_scroll.height() as f64;
@@ -498,13 +604,15 @@ fn wire_browser_pane(
             // CDP mouseWheel uses pixel delta; ~120px per scroll tick
             let delta_y = (dy * 120.0) as i64;
 
-            let s = state_for_scroll.borrow();
-            if let Some(ref bm) = s.browser_manager {
-                let _ = bm.send_command("input_mouse", serde_json::json!({
+            dispatch_nav(
+                runtime_for_scroll.as_ref(),
+                socket_for_scroll.clone(),
+                "input_mouse",
+                serde_json::json!({
                     "type": "mouseWheel", "x": cx, "y": cy,
                     "deltaX": 0, "deltaY": delta_y
-                }));
-            }
+                }),
+            );
             gtk4::glib::Propagation::Stop
         });
         picture_ref.add_controller(scroll_ctrl);
@@ -513,13 +621,9 @@ fn wire_browser_pane(
         let key_ctrl = gtk4::EventControllerKey::new();
         // Bubble phase so cmux capture-phase shortcuts (Ctrl+Shift+B etc) take priority
         key_ctrl.set_propagation_phase(gtk4::PropagationPhase::Bubble);
-        let state_for_key = state.clone();
+        let socket_for_kdown = socket_path.clone();
+        let runtime_for_kdown = runtime_handle.clone();
         key_ctrl.connect_key_pressed(move |_ctrl, keyval, _keycode, mods| {
-            let s = state_for_key.borrow();
-            let bm = match s.browser_manager.as_ref() {
-                Some(bm) => bm,
-                None => return gtk4::glib::Propagation::Proceed,
-            };
             let (key_str, code_str) = gdk_keyval_to_cdp(keyval);
             if key_str.is_empty() {
                 return gtk4::glib::Propagation::Proceed;
@@ -537,21 +641,29 @@ fn wire_browser_pane(
             if !text.is_empty() {
                 params.as_object_mut().unwrap().insert("text".to_string(), serde_json::json!(text));
             }
-            let _ = bm.send_command("input_keyboard", params);
+            dispatch_nav(
+                runtime_for_kdown.as_ref(),
+                socket_for_kdown.clone(),
+                "input_keyboard",
+                params,
+            );
             gtk4::glib::Propagation::Stop
         });
-        let state_for_keyup = state.clone();
+        let socket_for_kup = socket_path.clone();
+        let runtime_for_kup = runtime_handle.clone();
         key_ctrl.connect_key_released(move |_ctrl, keyval, _keycode, mods| {
-            let s = state_for_keyup.borrow();
-            if let Some(ref bm) = s.browser_manager {
-                let (key_str, code_str) = gdk_keyval_to_cdp(keyval);
-                if !key_str.is_empty() {
-                    let modifiers = cdp_modifiers(mods);
-                    let _ = bm.send_command("input_keyboard", serde_json::json!({
+            let (key_str, code_str) = gdk_keyval_to_cdp(keyval);
+            if !key_str.is_empty() {
+                let modifiers = cdp_modifiers(mods);
+                dispatch_nav(
+                    runtime_for_kup.as_ref(),
+                    socket_for_kup.clone(),
+                    "input_keyboard",
+                    serde_json::json!({
                         "type": "keyUp", "key": key_str, "code": code_str,
                         "modifiers": modifiers
-                    }));
-                }
+                    }),
+                );
             }
         });
         // Attach to container (the focusable Box) so it receives key events when preview is focused
@@ -564,74 +676,95 @@ fn wire_browser_pane(
     }
 
     // Step 5: Connect URL entry — Enter navigates the browser
-    let state_for_entry = state.clone();
     let picture_for_nav = picture_ref.clone();
+    let socket_for_entry = socket_path.clone();
+    let runtime_for_entry = runtime_handle.clone();
     url_entry.connect_activate(move |entry| {
         let raw_url = entry.text().to_string();
         if raw_url.is_empty() {
             return;
         }
-        // Auto-prepend https:// if no scheme is present
         let url = if raw_url.contains("://") {
             raw_url
         } else {
             format!("https://{raw_url}")
         };
         entry.set_text(&url);
-        let s = state_for_entry.borrow();
-        if let Some(ref bm) = s.browser_manager {
-            // Resize viewport to match current pane size before navigating
-            let w = picture_for_nav.width();
-            let h = picture_for_nav.height();
-            if w > 0 && h > 0 {
-                let _ = bm.send_command("viewport", serde_json::json!({"width": w, "height": h}));
-            }
-            let params = serde_json::json!({"url": url});
-            let _ = bm.send_command("navigate", params);
+        let w = picture_for_nav.width();
+        let h = picture_for_nav.height();
+        let mut steps: Vec<(&'static str, serde_json::Value)> = Vec::new();
+        if w > 0 && h > 0 {
+            steps.push(("viewport", serde_json::json!({"width": w, "height": h})));
         }
+        steps.push(("navigate", serde_json::json!({"url": url})));
+        dispatch_nav_seq(runtime_for_entry.as_ref(), socket_for_entry.clone(), steps);
     });
 
     // Step 6: DevTools toggle (D-10)
     let state_for_devtools = state.clone();
     let picture_for_devtools = picture_ref.clone();
+    let _ = state_for_devtools; // moved into the per-toggle closure below
+    let socket_for_dev = socket_path.clone();
+    let runtime_for_dev = runtime_handle.clone();
     widgets.devtools_btn.connect_toggled(move |btn| {
         if btn.is_active() {
-            // Fetch DOM snapshot from daemon
-            let snapshot_text = {
-                let s = state_for_devtools.borrow();
-                if let Some(ref bm) = s.browser_manager {
-                    match bm.send_command("snapshot", serde_json::json!({})) {
-                        Ok(result) => {
-                            if let Some(text) = result.get("data").and_then(|d| d.as_str()) {
-                                text.to_string()
-                            } else if let Some(text) = result.get("result").and_then(|d| d.as_str()) {
-                                text.to_string()
-                            } else {
-                                serde_json::to_string_pretty(&result).unwrap_or_default()
-                            }
-                        }
-                        Err(e) => format!("Snapshot error: {e}"),
-                    }
-                } else {
-                    "No browser session active".to_string()
-                }
+            // DOM snapshot can take seconds — fetch off the GTK main thread
+            // and push the resulting text into the overlay via glib::idle.
+            let Some(rt) = runtime_for_dev.as_ref() else {
+                eprintln!("cmux: devtools toggle skipped — no tokio runtime");
+                return;
             };
-
-            // Create scrollable text overlay on the Picture's parent Overlay
-            if let Some(overlay) = picture_for_devtools.parent().and_then(|p| p.downcast::<gtk4::Overlay>().ok()) {
-                let label = gtk4::Label::new(Some(&snapshot_text));
-                label.set_selectable(true);
-                label.set_wrap(true);
-                label.set_xalign(0.0);
-                label.set_yalign(0.0);
-                label.add_css_class("devtools-snapshot");
-                let scrolled = gtk4::ScrolledWindow::new();
-                scrolled.set_child(Some(&label));
-                scrolled.set_hexpand(true);
-                scrolled.set_vexpand(true);
-                scrolled.add_css_class("devtools-overlay");
-                overlay.add_overlay(&scrolled);
-            }
+            let socket = socket_for_dev.clone();
+            let picture_for_overlay = picture_for_devtools.clone();
+            // Use a tokio oneshot to ferry the snapshot back to the main
+            // thread; glib::MainContext::spawn_local awaits and updates the
+            // overlay. This avoids the Send constraint of idle_add_once
+            // (the GTK widgets are !Send + !Sync).
+            let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+            rt.spawn_blocking(move || {
+                let snapshot_text = match crate::browser::send_command_to(
+                    &socket,
+                    "snapshot",
+                    serde_json::json!({}),
+                ) {
+                    Ok(result) => {
+                        if let Some(text) = result.get("data").and_then(|d| d.as_str()) {
+                            text.to_string()
+                        } else if let Some(text) =
+                            result.get("result").and_then(|d| d.as_str())
+                        {
+                            text.to_string()
+                        } else {
+                            serde_json::to_string_pretty(&result).unwrap_or_default()
+                        }
+                    }
+                    Err(e) => format!("Snapshot error: {e}"),
+                };
+                let _ = tx.send(snapshot_text);
+            });
+            glib::MainContext::default().spawn_local(async move {
+                let snapshot_text = match rx.await {
+                    Ok(s) => s,
+                    Err(_) => return,
+                };
+                if let Some(overlay) = picture_for_overlay
+                    .parent()
+                    .and_then(|p| p.downcast::<gtk4::Overlay>().ok())
+                {
+                    let label = gtk4::Label::new(Some(&snapshot_text));
+                    label.set_selectable(true);
+                    label.set_wrap(true);
+                    label.set_xalign(0.0);
+                    label.set_yalign(0.0);
+                    label.add_css_class("devtools-snapshot");
+                    let scrolled = gtk4::ScrolledWindow::new();
+                    scrolled.set_child(Some(&label));
+                    scrolled.set_hexpand(true);
+                    scrolled.set_vexpand(true);
+                    scrolled.add_css_class("devtools-overlay");
+                    overlay.add_overlay(&scrolled);
+                }
+            });
         } else {
             // Remove the DevTools overlay
             if let Some(overlay) = picture_for_devtools.parent().and_then(|p| p.downcast::<gtk4::Overlay>().ok()) {

@@ -1365,23 +1365,32 @@ fn restore_active_pane_focus() {
     // entry, SSH dialog, …). Stealing focus from those is a UX regression:
     // every divider resize would interrupt typing.
     if let Ok(areas) = crate::ghostty::callbacks::GL_AREA_REGISTRY.lock() {
-        let mut focus_in_editable = false;
-        if let Some(area_ptr) = areas.iter().next() {
+        // Identify the window the active pane lives in. Picking the first
+        // GLArea unconditionally was wrong on multi-window setups — the
+        // hash iteration order picked an arbitrary area in some other
+        // window, so we queried the wrong window's focused widget.
+        let mut active_window: Option<gtk4::Window> = None;
+        for area_ptr in areas.iter() {
             let area: gtk4::glib::translate::Borrowed<gtk4::GLArea> =
                 unsafe { gtk4::glib::translate::from_glib_borrow(area_ptr.0) };
-            if let Some(root) = area.root() {
-                let window: Option<gtk4::Window> = root.dynamic_cast::<gtk4::Window>().ok();
-                if let Some(window) = window {
-                    let focused: Option<gtk4::Widget> = gtk4::prelude::GtkWindowExt::focus(&window);
-                    if let Some(focused) = focused {
-                        if focused.is::<gtk4::Entry>()
-                            || focused.is::<gtk4::Text>()
-                            || focused.is::<gtk4::SearchEntry>()
-                            || focused.is::<gtk4::TextView>()
-                        {
-                            focus_in_editable = true;
-                        }
-                    }
+            if area.has_css_class("active-pane") {
+                if let Some(root) = area.root() {
+                    active_window = root.dynamic_cast::<gtk4::Window>().ok();
+                    break;
+                }
+            }
+        }
+
+        let mut focus_in_editable = false;
+        if let Some(window) = active_window.as_ref() {
+            let focused: Option<gtk4::Widget> = gtk4::prelude::GtkWindowExt::focus(window);
+            if let Some(focused) = focused {
+                if focused.is::<gtk4::Entry>()
+                    || focused.is::<gtk4::Text>()
+                    || focused.is::<gtk4::SearchEntry>()
+                    || focused.is::<gtk4::TextView>()
+                {
+                    focus_in_editable = true;
                 }
             }
         }

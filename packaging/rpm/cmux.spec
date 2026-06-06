@@ -24,6 +24,21 @@ Requires:       libepoxy
 Requires:       libxkbcommon
 Requires:       graphene
 
+# Optional runtime: install-chromium.sh dependencies + Chromium shared libs
+# that the bundled binary expects. Marked Recommends so a minimal install
+# still gets the core cmux binary, but the browser preview pane needs them.
+Recommends:     curl
+Recommends:     jq
+Recommends:     unzip
+Recommends:     nss
+Recommends:     alsa-lib
+Recommends:     libdrm
+Recommends:     mesa-libgbm
+Recommends:     libXcomposite
+Recommends:     libXdamage
+Recommends:     cups-libs
+Recommends:     at-spi2-atk
+
 %description
 cmux is a GPU-accelerated terminal with tabs, splits, workspaces,
 and socket CLI control -- powered by Ghostty.

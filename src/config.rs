@@ -25,13 +25,6 @@ pub struct BrowserConfig {
     ///   chromium_path = "/usr/bin/chromium"
     ///   chromium_path = "/var/lib/flatpak/exports/bin/com.google.Chrome"
     pub chromium_path: Option<String>,
-
-    /// Optional download URL for a Chrome-for-Testing tarball. If set and the
-    /// bundled chromium under `$XDG_DATA_HOME/cmux/chromium/` is absent, cmux
-    /// will download from this URL on first browser-open. Leave empty to
-    /// disable auto-download. The cmux installer should pre-populate the
-    /// bundled directory when packaging permits.
-    pub auto_download_url: Option<String>,
 }
 
 /// Per-action shortcut overrides. Each value is a GTK accelerator string (e.g. "<Ctrl>n").

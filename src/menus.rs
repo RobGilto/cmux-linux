@@ -158,35 +158,65 @@ pub fn register_actions(
             eprintln!("cmux: install-chromium.sh not found alongside the cmux binary");
             return;
         };
-        let term = std::env::var("TERMINAL").ok().filter(|s| !s.is_empty());
-        let try_terms: Vec<String> = term
+        // Different terminal emulators take very different arg shapes for
+        // "run this command after the terminal starts":
+        //   * kitty / alacritty / xterm / foot: `-e <cmd> <args...>`
+        //   * wezterm: `wezterm start -- <cmd> <args...>`
+        //   * gnome-terminal: `-- <cmd> <args...>` (the legacy `-e` form
+        //     was removed in GNOME Terminal 3.46).
+        // We also need to quote the script path because $XDG_DATA_HOME may
+        // contain spaces or shell metacharacters.
+        let script_quoted = shell_quote(&script.display().to_string());
+        let bash_payload = format!(
+            "{script} ; echo ; read -p 'Press Enter to close…' _",
+            script = script_quoted,
+        );
+        let env_term = std::env::var("TERMINAL").ok().filter(|s| !s.is_empty());
+        let candidates: Vec<String> = env_term
             .into_iter()
             .chain(
                 [
                     "kitty",
                     "alacritty",
-                    "wezterm",
                     "foot",
+                    "wezterm",
                     "gnome-terminal",
+                    "konsole",
                     "xterm",
                 ]
                 .iter()
                 .map(|s| s.to_string()),
             )
             .collect();
-        for t in try_terms {
-            if which_in_path(&t).is_some() {
-                let _ = std::process::Command::new(&t)
-                    .arg("-e")
-                    .arg("bash")
-                    .arg("-lc")
-                    .arg(format!("{} ; echo ; read -p 'Press Enter to close…' _", script.display()))
-                    .spawn();
-                return;
+        for t in candidates {
+            let name = t.trim();
+            if which_in_path(name).is_none() {
+                continue;
             }
+            let mut cmd = std::process::Command::new(name);
+            match name {
+                "wezterm" => {
+                    cmd.args(["start", "--", "bash", "-lc"]).arg(&bash_payload);
+                }
+                "gnome-terminal" => {
+                    cmd.args(["--", "bash", "-lc"]).arg(&bash_payload);
+                }
+                "konsole" => {
+                    cmd.arg("-e").arg("bash").arg("-lc").arg(&bash_payload);
+                }
+                _ => {
+                    // kitty / alacritty / xterm / foot all accept `-e cmd args…`.
+                    cmd.arg("-e").arg("bash").arg("-lc").arg(&bash_payload);
+                }
+            }
+            if let Err(e) = cmd.spawn() {
+                eprintln!("cmux: failed to spawn {name}: {e}; trying next terminal");
+                continue;
+            }
+            return;
         }
         eprintln!(
-            "cmux: no terminal emulator found; run manually: bash {}",
+            "cmux: no usable terminal emulator found; run manually: bash {}",
             script.display()
         );
     });
@@ -517,6 +547,23 @@ fn shortcut(accel: &str, title: &str) -> gtk4::ShortcutsShortcut {
         .accelerator(accel)
         .title(title)
         .build()
+}
+
+/// Quote a string for safe inclusion inside `bash -c '...'`. Single-quote
+/// wrap and escape any embedded single quotes via the standard
+/// `'\''` sequence. POSIX-portable.
+fn shell_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for ch in s.chars() {
+        if ch == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push('\'');
+    out
 }
 
 /// Return the first absolute path to `name` found on `$PATH`, if any.

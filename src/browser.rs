@@ -102,6 +102,14 @@ impl BrowserManager {
     /// two lets the caller spawn the child synchronously and then dispatch the
     /// poll-and-handshake to a worker thread.
     pub fn spawn_daemon_child_if_needed(&mut self) -> Result<(), String> {
+        // Mark Loading on every entry path. handle_browser_open uses this
+        // flag as a re-entry guard; if we only set it in the spawn branch
+        // (which we did initially) a second rapid Ctrl+Shift+B sees state
+        // = Connected, passes the guard, and races a second bootstrap
+        // worker against the already-running daemon — re-issuing launch /
+        // navigate / screencast_start under the first pane.
+        self.preview_state = PreviewState::Loading;
+
         if self.daemon_ready() {
             return Ok(());
         }
@@ -201,37 +209,48 @@ impl BrowserManager {
             .map_err(|e| format!("Failed to parse stream port '{}': {}", content.trim(), e))
     }
 
-    /// Shut down the daemon and clean up.
+    /// Shut down the daemon and clean up. Non-blocking on the main thread:
+    /// the close command and 2-second reap run on a detached std::thread so
+    /// the GTK main loop never stalls on a slow daemon exit.
     pub fn shutdown(&mut self) {
-        // Try to send close command (best-effort).
-        let _ = self.send_command(
-            "close",
-            serde_json::json!({"id": "cmux-shutdown"}),
-        );
+        let socket_path = self.daemon_socket_path();
+        let mut child = self.daemon_process.take();
 
-        if let Some(ref mut child) = self.daemon_process {
-            // Wait up to 2 seconds, then kill.
-            let start = std::time::Instant::now();
-            loop {
-                match child.try_wait() {
-                    Ok(Some(_)) => break,
-                    Ok(None) => {
-                        if start.elapsed() > std::time::Duration::from_secs(2) {
-                            let _ = child.kill();
-                            break;
-                        }
-                        std::thread::sleep(std::time::Duration::from_millis(100));
-                    }
-                    Err(_) => break,
-                }
-            }
-        }
-        self.daemon_process = None;
-
+        // Stream task abort runs synchronously — it's cheap (tokio just
+        // flips a flag) and we want the WS reader gone before the daemon
+        // socket disappears, otherwise the reader logs spurious errors.
         if let Some(task) = self.stream_task.take() {
             task.abort();
         }
-        self.stream_task = None;
+
+        // Detach the daemon teardown so the GTK main thread isn't blocked
+        // on a 2-second poll. The detached thread will outlive the
+        // BrowserManager but only by milliseconds in the happy path —
+        // worst case 2s + kill, then it exits naturally.
+        std::thread::spawn(move || {
+            // Best-effort polite close: open a fresh connection because the
+            // BrowserManager's owned send_command is back on the main
+            // thread already. send_command_to runs on whatever thread it
+            // is called from.
+            let _ = send_command_to(&socket_path, "close", serde_json::json!({"id": "cmux-shutdown"}));
+
+            if let Some(ref mut child) = child {
+                let start = std::time::Instant::now();
+                loop {
+                    match child.try_wait() {
+                        Ok(Some(_)) => break,
+                        Ok(None) => {
+                            if start.elapsed() > std::time::Duration::from_secs(2) {
+                                let _ = child.kill();
+                                break;
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(100));
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
+        });
     }
 
     /// Connect to the agent-browser stream WebSocket and start forwarding
@@ -281,6 +300,12 @@ impl BrowserManager {
                 }
             }
         });
+        // Abort the prior stream task before overwriting the JoinHandle —
+        // without this, a re-open leaks the previous WS reader until the
+        // tokio runtime is dropped on app exit.
+        if let Some(prior) = self.stream_task.take() {
+            prior.abort();
+        }
         self.stream_task = Some(stream_task);
 
         // Spawn GTK-side receiver: poll mpsc and update Picture widget
@@ -496,14 +521,41 @@ pub fn spawn_motion_forwarder(
 
 /// Standard install location for a cmux-bundled Chromium.
 /// Mirrors $XDG_DATA_HOME/cmux/chromium/chrome with a $HOME fallback.
+///
+/// Security: XDG_DATA_HOME is only honoured when it canonicalizes to a path
+/// under the user's $HOME — a hostile XDG_DATA_HOME=/tmp/attacker would
+/// otherwise redirect the lookup to an attacker-controlled directory. If
+/// the canonicalized path escapes $HOME (or HOME is unset), fall back to
+/// the literal `$HOME/.local/share/cmux/chromium/chrome`.
 pub fn bundled_chromium_path() -> PathBuf {
-    let base = std::env::var("XDG_DATA_HOME")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".local/share")))
-        .unwrap_or_else(|| PathBuf::from("/tmp"));
-    base.join("cmux").join("chromium").join("chrome")
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    if let (Some(home), Ok(xdg)) = (home.clone(), std::env::var("XDG_DATA_HOME")) {
+        if !xdg.is_empty() {
+            let xdg_pb = PathBuf::from(&xdg);
+            let canon = std::fs::canonicalize(&xdg_pb).ok().unwrap_or(xdg_pb);
+            let home_canon = std::fs::canonicalize(&home).ok().unwrap_or(home.clone());
+            if canon.starts_with(&home_canon) {
+                return canon.join("cmux").join("chromium").join("chrome");
+            }
+        }
+    }
+    if let Some(home) = home {
+        return home
+            .join(".local/share")
+            .join("cmux")
+            .join("chromium")
+            .join("chrome");
+    }
+    PathBuf::from("/tmp/cmux/chromium/chrome")
+}
+
+/// True iff `path` is a regular file with at least one executable bit set.
+fn is_executable_file(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    match std::fs::metadata(path) {
+        Ok(meta) if meta.is_file() => meta.permissions().mode() & 0o111 != 0,
+        _ => false,
+    }
 }
 
 /// Resolve the Chromium executable cmux should hand to agent-browser.
@@ -515,22 +567,33 @@ pub fn bundled_chromium_path() -> PathBuf {
 ///   4. Flatpak wrappers under `/var/lib/flatpak/exports/bin/`.
 ///   5. None — let agent-browser do its own discovery and fail loudly.
 fn resolve_chromium_path(config_override: Option<&str>) -> Option<PathBuf> {
+    let log = |source: &str, p: &std::path::Path| {
+        eprintln!("cmux: chromium binary = {} (source: {source})", p.display());
+    };
+
     if let Some(p) = config_override.filter(|s| !s.is_empty()) {
         let pb = PathBuf::from(p);
-        if pb.is_file() {
+        if is_executable_file(&pb) {
+            log("config.toml", &pb);
             return Some(pb);
         }
         eprintln!(
-            "cmux: chromium_path '{}' from config does not exist; ignoring and falling back",
+            "cmux: chromium_path '{}' from config is missing or not executable; ignoring and falling back",
             p,
         );
     }
 
     let bundled = bundled_chromium_path();
-    if bundled.is_file() {
+    if is_executable_file(&bundled) {
+        log("bundled", &bundled);
         return Some(bundled);
     }
 
+    // PATH lookup. POSIX treats an empty PATH element as `$PWD`, which would
+    // let a hostile cwd-controlled `chrome` win — explicitly skip empty
+    // segments. We also require the matched binary to have an execute bit
+    // set so a non-executable decoy at $HOME/.cargo/bin/chrome doesn't
+    // shadow a real /usr/bin/chromium further down PATH.
     let path_var = std::env::var("PATH").unwrap_or_default();
     for name in [
         "chromium",
@@ -540,8 +603,12 @@ fn resolve_chromium_path(config_override: Option<&str>) -> Option<PathBuf> {
         "chrome",
     ] {
         for dir in path_var.split(':') {
+            if dir.is_empty() {
+                continue;
+            }
             let candidate = PathBuf::from(dir).join(name);
-            if candidate.is_file() {
+            if is_executable_file(&candidate) {
+                log("PATH", &candidate);
                 return Some(candidate);
             }
         }
@@ -553,7 +620,8 @@ fn resolve_chromium_path(config_override: Option<&str>) -> Option<PathBuf> {
         "/var/lib/flatpak/exports/bin/io.github.ungoogled_software.ungoogled_chromium",
     ] {
         let pb = PathBuf::from(flatpak);
-        if pb.is_file() {
+        if is_executable_file(&pb) {
+            log("flatpak", &pb);
             return Some(pb);
         }
     }
