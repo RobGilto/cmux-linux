@@ -91,6 +91,18 @@ exist on both ports, see the upstream changelog for macOS history.
 
 ### Added (post-review)
 
+- **`GHOSTTY_PLATFORM_GTK4` re-introduced into the ghostty fork.**
+  Without this platform variant `ghostty_surface_new` returned null
+  for every GtkGLArea-backed surface — the Linux port could create
+  the GTK window but every pane immediately died at startup. The fork
+  pin was moved from `manaflow-ai/ghostty` to `tcsenpai/ghostty` on
+  branch `cmux-fork-gtk4-platform`; the patch adds the GTK4 platform
+  arm to `PlatformTag`, `Platform`, `Platform.C`, and `Platform.init()`
+  in `src/apprt/embedded.zig`, and dispatches the GTK4 case to
+  `prepareContext(null)` in `OpenGL.surfaceInit`. `cmux-app` now
+  reaches `set_focus(true)` on the first surface instead of dying with
+  `FATAL — ghostty_surface_new returned null`.
+
 - **`agent-browser` daemon is back in the workspace.** Added
   [`vercel-labs/agent-browser`](https://github.com/vercel-labs/agent-browser)
   as a git submodule at `agent-browser/`. The `agent-browser/cli` crate is
