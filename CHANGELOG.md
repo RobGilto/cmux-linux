@@ -91,6 +91,20 @@ exist on both ports, see the upstream changelog for macOS history.
 
 ### Added (post-review)
 
+- **Portable AppImage builds.** New `scripts/build-appimage.sh` produces
+  two flavours:
+    * `cmux-core-x86_64.AppImage` (~50 MB) — bundles cmux + ghostty +
+      agent-browser + libc++. Requires the host to have GTK4 4.14+
+      installed (system libgtk-4-1 / libglib2.0 / libnss / etc.).
+    * `cmux-full-x86_64.AppImage` (~214 MB) — adds a self-contained
+      Chrome-for-Testing build under `usr/share/cmux/chromium/`, so
+      the browser preview pane works on every Linux host that has GTK4.
+  Both images use a minimal-bundle policy (linuxdeploy-plugin-gtk
+  over-bundles aggressively; we cull everything except libc++ +
+  libghostty and strip RUNPATH from the binaries so they fall through
+  to system libgsystemd/libcrypto/libdbus). Triggered with
+  `CMUX_APPIMAGE_FLAVOUR=core|full`. Verified live on Fedora 44.
+
 - **`GHOSTTY_PLATFORM_GTK4` re-introduced into the ghostty fork.**
   Without this platform variant `ghostty_surface_new` returned null
   for every GtkGLArea-backed surface — the Linux port could create
