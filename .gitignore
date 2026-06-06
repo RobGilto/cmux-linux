@@ -56,3 +56,31 @@ tmp-*/
 dist/
 daemon/remote/cmuxd-remote
 found
+
+# AppImage build cache + scratch extraction
+.build-tools/
+squashfs-root/
+AppDir-*/
+
+# Agent / IDE workspaces
+.serena/
+.claude/worktrees/
+
+# codedb local indices (per-machine)
+codedb.snapshot
+
+# Local-only mode marker (TEAM.md is generated per-session and per-machine)
+TEAM.md
+
+# Submodule build artefacts
+ghostty/zig-out/
+ghostty/.zig-cache/
+ghostty/codedb.snapshot
+
+# Per-user backups (browser_settings.rs temp + RTK logs etc.)
+*.cmux-settings.*.tmp
+.local/
+
+# Editor swap
+*.swp
+.~*
