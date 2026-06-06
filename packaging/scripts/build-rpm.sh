@@ -38,8 +38,11 @@ STAGING="$BUILD_DIR/SOURCES"
 mkdir -p "$STAGING/icons"
 mkdir -p "$BUILD_DIR/rpmbuild"/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
 
-# Stage binaries
+# Stage binaries. cmux-app = real Rust binary (will land as cmux-app.bin);
+# cmux-app-wrapper.sh = shell entry that selects GDK backend (forces X11 on
+# NVIDIA proprietary). Mirrors packaging/scripts/build-deb.sh.
 cp "$CMUX_APP" "$STAGING/cmux-app"
+cp "$REPO_ROOT/packaging/scripts/cmux-app-wrapper.sh" "$STAGING/cmux-app-wrapper.sh"
 cp "$CMUX_CLI" "$STAGING/cmux"
 cp "$CMUXD_REMOTE" "$STAGING/cmuxd-remote"
 cp "$AGENT_BROWSER" "$STAGING/agent-browser"

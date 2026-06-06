@@ -29,7 +29,11 @@ cmux is a GPU-accelerated terminal with tabs, splits, workspaces,
 and socket CLI control -- powered by Ghostty.
 
 %install
-install -Dm0755 %{_sourcedir}/cmux-app %{buildroot}%{_bindir}/cmux-app
+# cmux-app = wrapper script that selects the GDK backend (forces X11 on
+# NVIDIA proprietary, falls back to system default otherwise);
+# cmux-app.bin = the real Rust binary. Mirrors packaging/scripts/build-deb.sh.
+install -Dm0755 %{_sourcedir}/cmux-app %{buildroot}%{_bindir}/cmux-app.bin
+install -Dm0755 %{_sourcedir}/cmux-app-wrapper.sh %{buildroot}%{_bindir}/cmux-app
 install -Dm0755 %{_sourcedir}/cmux %{buildroot}%{_bindir}/cmux
 install -Dm0755 %{_sourcedir}/cmuxd-remote %{buildroot}%{_libdir}/cmux/cmuxd-remote
 install -Dm0755 %{_sourcedir}/agent-browser %{buildroot}%{_libdir}/cmux/agent-browser
@@ -60,6 +64,7 @@ install -Dm0644 %{_sourcedir}/CLAUDE.md %{buildroot}%{_datadir}/cmux/CLAUDE.md
 
 %files
 %{_bindir}/cmux-app
+%{_bindir}/cmux-app.bin
 %{_bindir}/cmux
 %{_libdir}/cmux/cmuxd-remote
 %{_libdir}/cmux/agent-browser
