@@ -15,11 +15,11 @@ Read the SKILL.md in each directory for full usage instructions.
 
 The `cmux` CLI communicates with the running cmux-app via Unix socket JSON-RPC.
 
-> **Browser commands require a separate `agent-browser` daemon binary.** It is
-> not bundled with this package; install it at
-> `~/.local/share/cmux/bin/agent-browser` (see
-> https://github.com/vercel-labs/agent-browser). Without the daemon,
-> `cmux browser …` commands return runtime errors.
+> Browser commands rely on the `agent-browser` daemon. The packaged install
+> ships the binary alongside cmux; `cmux browser …` will spawn it
+> automatically. If you built the package with
+> `CMUX_AGENT_BROWSER_OPTIONAL=1`, drop a binary at
+> `~/.local/share/cmux/bin/agent-browser` to enable browser commands.
 
 ### Key Commands
 

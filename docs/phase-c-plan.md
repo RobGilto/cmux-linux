@@ -135,17 +135,13 @@ marker file + password file paths haven't been audited.
 These were surfaced during the adversarial review on `fix/linux-port-modernize`
 but deliberately not fixed in that branch.
 
-- **cmux-browser skill + packaging/CLAUDE.md vs optional agent-browser.**
-  The packaging now skips the `agent-browser` binary install when
-  absent (Phase A+adversarial review fix), but the
-  `cmux-browser` skill files and `packaging/CLAUDE.md` still ship
-  unconditionally and advertise browser commands as available. A
-  one-line note was added to `packaging/CLAUDE.md` to call out the
-  daemon dependency; a fuller fix (skip the skill copy when
-  `INCLUDE_AGENT_BROWSER=0`, or add a runtime probe in `cmux browser`
-  that exits with a clear "agent-browser not installed" message) is
-  Phase C work — paired with myc task #2 since the right answer is to
-  finish wiring agent-browser back in.
+- ~~**cmux-browser skill + packaging/CLAUDE.md vs optional
+  agent-browser.**~~ Resolved post-adversarial-review by adding
+  `vercel-labs/agent-browser` as a git submodule at `agent-browser/`
+  and restoring `agent-browser/cli` to the cargo workspace. A normal
+  `cargo build --release` now produces the daemon at
+  `target/release/agent-browser`; packaging defaults to requiring it
+  and only skips when `CMUX_AGENT_BROWSER_OPTIONAL=1` is set.
 - **`TODO.md` and `PROJECTS.md` are historical macOS-era documents.**
   Both still describe upstream-imported items (WKWebView, Sparkle,
   Bonsplit, etc.) that no longer apply on Linux. Pre-existing — not

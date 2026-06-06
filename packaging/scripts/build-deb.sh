@@ -16,10 +16,10 @@ AGENT_BROWSER="${4:-$REPO_ROOT/target/release/agent-browser}"
 # Extract version from Cargo.toml
 VERSION=$(grep '^version' "$REPO_ROOT/Cargo.toml" | head -1 | sed 's/.*"\(.*\)"/\1/')
 
-# Verify required binaries exist. agent-browser is optional — the source
-# crate is not yet re-included in this repo (Phase B note); ship without it
-# and let runtime FHS lookup find an external install, or set
-# CMUX_AGENT_BROWSER_REQUIRED=1 in CI to fail closed.
+# Verify all required binaries exist. agent-browser is now a workspace
+# member (agent-browser/cli/Cargo.toml); `cargo build --release` produces it
+# at target/release/agent-browser. Override CMUX_AGENT_BROWSER_OPTIONAL=1
+# only if you intentionally want a browser-less package.
 for bin in "$CMUX_APP" "$CMUX_CLI" "$CMUXD_REMOTE"; do
     if [[ ! -f "$bin" ]]; then
         echo "ERROR: Binary not found: $bin" >&2
@@ -29,14 +29,15 @@ done
 
 INCLUDE_AGENT_BROWSER=1
 if [[ ! -f "$AGENT_BROWSER" ]]; then
-    if [[ "${CMUX_AGENT_BROWSER_REQUIRED:-0}" == "1" ]]; then
-        echo "ERROR: agent-browser binary not found at $AGENT_BROWSER (CMUX_AGENT_BROWSER_REQUIRED=1)" >&2
+    if [[ "${CMUX_AGENT_BROWSER_OPTIONAL:-0}" == "1" ]]; then
+        echo "WARNING: agent-browser not found at $AGENT_BROWSER; building .deb without browser daemon (CMUX_AGENT_BROWSER_OPTIONAL=1)."
+        INCLUDE_AGENT_BROWSER=0
+    else
+        echo "ERROR: agent-browser binary not found at $AGENT_BROWSER" >&2
+        echo "       Build it with: cargo build --release -p agent-browser" >&2
+        echo "       Or set CMUX_AGENT_BROWSER_OPTIONAL=1 to build without it." >&2
         exit 1
     fi
-    echo "WARNING: agent-browser not found at $AGENT_BROWSER; building .deb without browser daemon."
-    echo "         Browser commands will fail at runtime until users drop a binary at"
-    echo "         ~/.local/share/cmux/bin/agent-browser. See README 'Browser Automation' section."
-    INCLUDE_AGENT_BROWSER=0
 fi
 
 OUTPUT_DIR="${REPO_ROOT}/dist"

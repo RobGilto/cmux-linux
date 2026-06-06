@@ -19,13 +19,17 @@
    cd cmux-linux
    ```
 
-2. Initialize the ghostty submodule:
+2. Initialize the submodules:
    ```bash
-   git submodule update --init ghostty
+   git submodule update --init ghostty agent-browser
    ```
 
-   The `homebrew-cmux` and `vendor/bonsplit` submodules are macOS-only and may be
-   left uninitialized for Linux work.
+   - `ghostty` — the terminal engine; required to build `ghostty-internal.a`.
+   - `agent-browser` — the [vercel-labs/agent-browser](https://github.com/vercel-labs/agent-browser)
+     CDP daemon; required for `cmux browser …` commands.
+
+   The `homebrew-cmux` and `vendor/bonsplit` references are gone (Phase B);
+   you do not need them.
 
 3. Build the embedded ghostty library and Rust app:
    ```bash

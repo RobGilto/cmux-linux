@@ -27,10 +27,13 @@ if ! pkg-config --exists gtk4 2>/dev/null; then
     fi
 fi
 
-echo "==> Refreshing ghostty submodule..."
-# --force handles the case where an existing checkout points at the old pinned
-# SHA (4845e82d) that is no longer reachable on manaflow-ai/ghostty.
+echo "==> Refreshing submodules..."
+# --force handles the case where an existing ghostty checkout points at the
+# old pinned SHA (4845e82d) that is no longer reachable on
+# manaflow-ai/ghostty. agent-browser is the vercel-labs/agent-browser daemon
+# crate; restored as a workspace member after the adversarial review.
 git submodule update --init --force ghostty
+git submodule update --init agent-browser
 
 echo "==> Building libghostty.a from ghostty submodule..."
 cd ghostty

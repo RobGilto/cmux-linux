@@ -10,10 +10,11 @@ implementation is live on Linux.
 ## Initial setup
 
 ```bash
-./scripts/setup-linux.sh              # runs `git submodule update --init --force ghostty`,
+./scripts/setup-linux.sh              # initializes ghostty + agent-browser submodules
+                                      # (the former with --force; see note below),
                                       # installs GTK4/clang/libc++ dev headers,
-                                      # then builds ghostty-internal.a
-cargo build --release
+                                      # builds ghostty-internal.a
+cargo build --release                 # builds cmux-app, cmux, cmux-generate, agent-browser
 ./scripts/install-cmuxd-remote.sh     # builds + installs the Go SSH daemon
 ```
 

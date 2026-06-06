@@ -53,14 +53,16 @@ sudo rpm -i cmux-0.1.0-1.x86_64.rpm
 # the --force is required because the previously pinned ghostty SHA
 # (4845e82d) is no longer reachable on manaflow-ai/ghostty.
 ./scripts/setup-linux.sh                      # builds ghostty-internal.a
-cargo build --release --bin cmux --bin cmux-app
+cargo build --release                         # builds cmux-app, cmux, cmux-generate, agent-browser
 ./scripts/install-cmuxd-remote.sh             # builds + installs cmuxd-remote SSH helper
 ```
 
-> The `agent-browser` daemon ships as a separate binary. Until the source crate is
-> re-included in this repo, download or build it from
-> [vercel-labs/agent-browser](https://github.com/vercel-labs/agent-browser) and
-> place it on `$PATH` or under `~/.local/share/cmux/bin/agent-browser`.
+The `agent-browser` crate lives in the `agent-browser/` submodule
+([vercel-labs/agent-browser](https://github.com/vercel-labs/agent-browser))
+and is built as part of the workspace; `cargo build --release` produces it
+at `target/release/agent-browser`. Browser commands (`cmux browser …`)
+require this binary to be on `$PATH` or under
+`~/.local/share/cmux/bin/agent-browser`.
 
 ## Browser Automation
 

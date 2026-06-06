@@ -89,6 +89,18 @@ exist on both ports, see the upstream changelog for macOS history.
   `cargo build --release -p agent-browser`; the workspace member was
   removed in Phase A and the documented command would have failed.
 
+### Added (post-review)
+
+- **`agent-browser` daemon is back in the workspace.** Added
+  [`vercel-labs/agent-browser`](https://github.com/vercel-labs/agent-browser)
+  as a git submodule at `agent-browser/`. The `agent-browser/cli` crate is
+  a workspace member again, so `cargo build --release` produces the daemon
+  at `target/release/agent-browser` alongside the rest of the binaries.
+  `setup-linux.sh` initializes both the ghostty and agent-browser
+  submodules; packaging requires the daemon by default
+  (set `CMUX_AGENT_BROWSER_OPTIONAL=1` to opt out). Browser commands
+  (`cmux browser …`) are once again fully supported.
+
 ### Fixed (adversarial review round 2)
 
 - **SSH `IoWriteContext` leak.** Round-1 introduced a
