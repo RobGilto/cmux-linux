@@ -80,12 +80,16 @@ pub fn format_surface_list(result: &Value, color: bool) -> String {
     }
     let mut lines = Vec::new();
     for surface in surfaces {
+        // The wire fields are `uuid` and `active` (surface.list); accept the
+        // older `id`/`focused` names too so either shape formats correctly.
         let focused = surface
-            .get("focused")
+            .get("active")
+            .or_else(|| surface.get("focused"))
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
         let id = surface
-            .get("id")
+            .get("uuid")
+            .or_else(|| surface.get("id"))
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
         let id_short = &id[..id.len().min(8)];
@@ -119,12 +123,16 @@ pub fn format_pane_list(result: &Value, color: bool) -> String {
     }
     let mut lines = Vec::new();
     for pane in panes {
+        // The wire fields are `uuid` and `active` (pane.list); accept the
+        // older `id`/`focused` names too so either shape formats correctly.
         let focused = pane
-            .get("focused")
+            .get("active")
+            .or_else(|| pane.get("focused"))
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
         let id = pane
-            .get("id")
+            .get("uuid")
+            .or_else(|| pane.get("id"))
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
         let id_short = &id[..id.len().min(8)];
@@ -213,17 +221,28 @@ fn format_notification_list(result: &Value, color: bool) -> String {
     }
     let mut lines = Vec::new();
     for n in notifications {
+        // Wire fields: workspace_uuid / workspace_name / has_attention.
         let id = n
-            .get("id")
+            .get("workspace_uuid")
+            .or_else(|| n.get("id"))
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
         let id_short = &id[..id.len().min(8)];
+        let name = n
+            .get("workspace_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         let attention = n
-            .get("attention")
+            .get("has_attention")
+            .or_else(|| n.get("attention"))
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
         let marker = if attention { "!" } else { " " };
-        let line = format!("{} {}", marker, id_short);
+        let line = if name.is_empty() {
+            format!("{} {}", marker, id_short)
+        } else {
+            format!("{} {} ({})", marker, id_short, name)
+        };
         if attention && color {
             lines.push(green(&line, true));
         } else {

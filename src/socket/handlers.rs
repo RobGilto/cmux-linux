@@ -198,11 +198,17 @@ pub fn handle_socket_command(
             // SOCK-05: No focus side effects.
             let s = state.borrow();
             let list: Vec<Value> = s.workspaces.iter().enumerate().map(|(i, ws)| {
+                let pane_count = s
+                    .split_engines
+                    .get(i)
+                    .map(|e| e.all_panes().len())
+                    .unwrap_or(0);
                 json!({
                     "index": i,
                     "id": ws.uuid.to_string(),
                     "title": ws.name,
                     "selected": i == s.active_index,
+                    "pane_count": pane_count,
                 })
             }).collect();
             let _ = resp_tx.send(ok(req_id, json!({"workspaces": list})));
