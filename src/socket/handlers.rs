@@ -644,19 +644,22 @@ pub fn handle_socket_command(
             // SOCK-05: health is NOT focus-intent — NO focus change.
             let (found, has_attention) = {
                 let s = state.borrow();
-                if let Some(engine) = s.split_engines.get(s.active_index) {
-                    if let Some(ref uuid_str) = id {
-                        let alive = engine.find_surface_by_uuid(uuid_str).is_some();
-                        let attn = engine.find_pane_id_by_uuid(uuid_str)
-                            .map(|pid| engine.root.pane_has_attention(pid))
-                            .unwrap_or(false);
-                        (alive, attn)
-                    } else {
-                        let attn = engine.root.find_active_pane_id()
-                            .map(|pid| engine.root.pane_has_attention(pid))
-                            .unwrap_or(false);
-                        (true, attn)
-                    }
+                if let Some(ref uuid_str) = id {
+                    // Search every workspace engine, not just the active one —
+                    // fleet orchestrators health-check background workspaces.
+                    s.split_engines
+                        .iter()
+                        .find_map(|engine| {
+                            engine.find_pane_id_by_uuid(uuid_str).map(|pid| {
+                                (true, engine.root.pane_has_attention(pid))
+                            })
+                        })
+                        .unwrap_or((false, false))
+                } else if let Some(engine) = s.split_engines.get(s.active_index) {
+                    let attn = engine.root.find_active_pane_id()
+                        .map(|pid| engine.root.pane_has_attention(pid))
+                        .unwrap_or(false);
+                    (true, attn)
                 } else { (false, false) }
             };
             let _ = resp_tx.send(ok(req_id, json!({"alive": found, "has_attention": has_attention})));
