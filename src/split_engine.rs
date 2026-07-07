@@ -395,7 +395,7 @@ impl SplitEngine {
             return None;
         }
         match data {
-            SplitNodeData::Leaf { surface_uuid, agent_provider, agent_session_id, .. } => {
+            SplitNodeData::Leaf { surface_uuid, agent_provider, agent_session_id, cwd, .. } => {
                 let pane_id = *next_pane_id;
                 *next_pane_id += 1;
                 // Create surface — realize callback will create Ghostty surface and wire registries
@@ -410,7 +410,13 @@ impl SplitEngine {
                     .as_deref()
                     .and_then(crate::agent::Provider::from_str)
                 {
-                    crate::agent::register(&uuid.to_string(), p, agent_session_id.clone());
+                    let resume_cwd = if cwd.is_empty() { None } else { Some(cwd.clone()) };
+                    crate::agent::register(
+                        &uuid.to_string(),
+                        p,
+                        agent_session_id.clone(),
+                        resume_cwd,
+                    );
                 }
                 let surface_placeholder: ffi::ghostty_surface_t = std::ptr::null_mut();
                 Some(SplitNode::Leaf {
@@ -1542,9 +1548,18 @@ impl SplitNode {
     pub fn to_data(&self) -> SplitNodeData {
         match self {
             SplitNode::Leaf { pane_id, uuid, surface, .. } => {
-                let cwd = get_surface_cwd(*surface);
                 let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
                 let agent = crate::agent::get(&uuid.to_string());
+                // For agent surfaces, the registry holds the authoritative
+                // launch cwd (agents key their session store by project dir,
+                // and get_surface_cwd is a best-effort /proc guess that can't
+                // reliably map a surface to its own child). Fall back to the
+                // /proc guess for plain shells.
+                let cwd = agent
+                    .as_ref()
+                    .and_then(|a| a.cwd.clone())
+                    .filter(|c| !c.is_empty())
+                    .unwrap_or_else(|| get_surface_cwd(*surface));
                 SplitNodeData::Leaf {
                     pane_id: *pane_id,
                     surface_uuid: *uuid,

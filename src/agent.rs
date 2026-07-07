@@ -52,6 +52,10 @@ impl Provider {
 pub struct AgentSession {
     pub provider: Provider,
     pub session_id: Option<String>,
+    /// Working directory the agent was launched in. Required for resume:
+    /// agents like Claude Code key their session store by project directory,
+    /// so `claude --resume <id>` only finds the session from that same cwd.
+    pub cwd: Option<String>,
 }
 
 /// surface UUID (string) -> agent session. Populated when an agent surface is
@@ -60,22 +64,48 @@ pub static AGENT_SESSIONS: LazyLock<Mutex<HashMap<String, AgentSession>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Register (or re-register, on restore) an agent surface.
-pub fn register(surface_uuid: &str, provider: Provider, session_id: Option<String>) {
+pub fn register(
+    surface_uuid: &str,
+    provider: Provider,
+    session_id: Option<String>,
+    cwd: Option<String>,
+) {
     if let Ok(mut m) = AGENT_SESSIONS.lock() {
-        m.insert(surface_uuid.to_string(), AgentSession { provider, session_id });
+        m.insert(
+            surface_uuid.to_string(),
+            AgentSession { provider, session_id, cwd },
+        );
     }
 }
 
+/// Outcome of a session-id report.
+pub enum CaptureResult {
+    /// First id captured for this surface — persist it.
+    Captured,
+    /// Surface already has a captured id; kept it (first-wins).
+    AlreadyCaptured,
+    /// Surface is not a known agent surface.
+    NotAgent,
+}
+
 /// Record the native session id captured by the provider's hook.
-/// Returns true if the surface was a known agent surface.
-pub fn set_session_id(surface_uuid: &str, session_id: &str) -> bool {
+///
+/// First-capture-wins: agents fire SessionStart repeatedly (startup, then
+/// again on resume / clear / compact), and only the FIRST id has the
+/// conversation history we want to resume — later events mint fresh, empty
+/// ids. Once a surface has an id we keep it, so a resumed pane stays pinned
+/// to the session that actually holds the conversation.
+pub fn set_session_id(surface_uuid: &str, session_id: &str) -> CaptureResult {
     if let Ok(mut m) = AGENT_SESSIONS.lock() {
         if let Some(a) = m.get_mut(surface_uuid) {
+            if a.session_id.is_some() {
+                return CaptureResult::AlreadyCaptured;
+            }
             a.session_id = Some(session_id.to_string());
-            return true;
+            return CaptureResult::Captured;
         }
     }
-    false
+    CaptureResult::NotAgent
 }
 
 pub fn get(surface_uuid: &str) -> Option<AgentSession> {
@@ -88,15 +118,20 @@ pub fn remove(surface_uuid: &str) {
     }
 }
 
-/// The startup command for an agent surface: export CMUX_PANE (so the hook
-/// can report against this surface) then boot the agent, resuming if we have
-/// a captured session id.
+/// The startup command for an agent surface: cd into its project directory
+/// (so the agent finds its per-project session store on resume), export
+/// CMUX_PANE (so the hook can report against this surface), then boot the
+/// agent — resuming if we have a captured session id.
 pub fn startup_command(surface_uuid: &str, session: &AgentSession) -> String {
-    format!(
+    let launch = format!(
         "export CMUX_PANE={}; {}",
         surface_uuid,
         session.provider.launch_command(session.session_id.as_deref())
-    )
+    );
+    match session.cwd.as_deref().filter(|c| !c.is_empty()) {
+        Some(cwd) => format!("cd '{}'; {}", cwd, launch),
+        None => launch,
+    }
 }
 
 /// Install the session-capture hook for Claude Code into

@@ -158,15 +158,15 @@ fn layout_to_data(
                 .and_then(|v| v.as_str())
                 .and_then(crate::agent::Provider::from_str);
             let command = if let Some(p) = agent_provider {
-                crate::agent::register(&uuid.to_string(), p, None);
-                let session = crate::agent::AgentSession { provider: p, session_id: None };
-                // startup_command sets CMUX_PANE then launches; prepend cwd.
-                let launch = crate::agent::startup_command(&uuid.to_string(), &session);
-                if cwd.is_empty() {
-                    launch
-                } else {
-                    format!("cd '{}'; {}", cwd, launch)
-                }
+                let resume_cwd = if cwd.is_empty() { None } else { Some(cwd.to_string()) };
+                crate::agent::register(&uuid.to_string(), p, None, resume_cwd.clone());
+                // startup_command handles cd (into cwd) + CMUX_PANE + launch.
+                let session = crate::agent::AgentSession {
+                    provider: p,
+                    session_id: None,
+                    cwd: resume_cwd,
+                };
+                crate::agent::startup_command(&uuid.to_string(), &session)
             } else {
                 let cmd = spec.get("command").and_then(|v| v.as_str()).unwrap_or("");
                 match (cwd.is_empty(), cmd.is_empty()) {
@@ -1054,19 +1054,25 @@ pub fn handle_socket_command(
                 // provider so it still becomes resumable.
                 if crate::agent::get(&surface).is_none() {
                     if let Some(p) = provider.as_deref().and_then(crate::agent::Provider::from_str) {
-                        crate::agent::register(&surface, p, None);
+                        crate::agent::register(&surface, p, None, None);
                     }
                 }
-                let known = crate::agent::set_session_id(&surface, &session_id);
-                if known {
-                    state.borrow().trigger_session_save();
-                    crate::socket::events::emit(
-                        "agent.session",
-                        json!({"surface_uuid": surface, "session_id": session_id}),
-                    );
-                    let _ = resp_tx.send(ok(req_id, json!({"captured": true})));
-                } else {
-                    let _ = resp_tx.send(err(req_id, "not_found", "surface is not an agent surface"));
+                match crate::agent::set_session_id(&surface, &session_id) {
+                    crate::agent::CaptureResult::Captured => {
+                        state.borrow().trigger_session_save();
+                        crate::socket::events::emit(
+                            "agent.session",
+                            json!({"surface_uuid": surface, "session_id": session_id}),
+                        );
+                        let _ = resp_tx.send(ok(req_id, json!({"captured": true})));
+                    }
+                    crate::agent::CaptureResult::AlreadyCaptured => {
+                        // Keep the first id (the one with history); ack anyway.
+                        let _ = resp_tx.send(ok(req_id, json!({"captured": false, "kept_existing": true})));
+                    }
+                    crate::agent::CaptureResult::NotAgent => {
+                        let _ = resp_tx.send(err(req_id, "not_found", "surface is not an agent surface"));
+                    }
                 }
             }
         }
