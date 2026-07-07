@@ -477,7 +477,7 @@ impl AppState {
     }
 
     /// Update the sidebar dot visibility for workspace at `index`.
-    fn update_sidebar_attention(&self, index: usize) {
+    pub(crate) fn update_sidebar_attention(&self, index: usize) {
         if let Some(row) = self.sidebar_list.row_at_index(index as i32) {
             let has_attention = self.workspaces.get(index)
                 .map(|ws| ws.has_attention)

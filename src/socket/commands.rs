@@ -52,6 +52,14 @@ pub enum SocketCommand {
     // -- notification.* (Phase 4: NOTF-01, NOTF-02) --
     NotificationList   { req_id: Value, resp_tx: RespTx },
     NotificationClear  { req_id: Value, id: String, resp_tx: RespTx },
+    NotificationCreate {
+        req_id: Value,
+        title: String,
+        body: String,
+        workspace: Option<String>,
+        desktop: bool,
+        resp_tx: RespTx,
+    },
 
     // -- browser.* (Phase 8: D-04 lifecycle + streaming) --
     BrowserOpen          { req_id: Value, url: String, workspace: Option<String>, resp_tx: RespTx },

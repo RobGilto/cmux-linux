@@ -152,7 +152,8 @@ pub fn handle_socket_command(
                 "surface.health", "surface.refresh",
                 "pane.list", "pane.focus", "pane.last",
                 "window.list", "window.current",
-                "notification.list", "notification.clear",
+                "notification.list", "notification.clear", "notification.create",
+                "events.subscribe",
                 // Browser lifecycle + streaming
                 "browser.open", "browser.close", "browser.list",
                 "browser.stream.enable", "browser.stream.disable",
@@ -762,6 +763,57 @@ pub fn handle_socket_command(
                 Some(i) => {
                     state.borrow_mut().clear_workspace_attention(i);
                     let _ = resp_tx.send(ok(req_id, json!({})));
+                }
+                None => {
+                    let _ = resp_tx.send(err(req_id, "not_found", "workspace not found"));
+                }
+            }
+        }
+
+        SocketCommand::NotificationCreate { req_id, title, body, workspace, desktop, resp_tx } => {
+            // SOCK-05: No focus side effects — marks attention and notifies,
+            // never switches workspace. Agents raise these from lifecycle
+            // hooks ("done", "needs input"); orchestrators consume them via
+            // `cmux events --name notification.created`.
+            let ws_info = {
+                let mut s = state.borrow_mut();
+                let idx = match workspace {
+                    Some(ref uuid) => s
+                        .workspaces
+                        .iter()
+                        .position(|ws| ws.uuid.to_string() == *uuid),
+                    None => Some(s.active_index),
+                };
+                idx.map(|i| {
+                    s.workspaces[i].has_attention = true;
+                    s.update_sidebar_attention(i);
+                    (s.workspaces[i].uuid.to_string(), s.workspaces[i].name.clone())
+                })
+            };
+            match ws_info {
+                Some((ws_uuid, ws_name)) => {
+                    if desktop {
+                        // notify-rust is unreliable on some desktops; the app
+                        // convention is shelling out to notify-send (see CLAUDE.md).
+                        let _ = std::process::Command::new("notify-send")
+                            .arg("--app-name=cmux")
+                            .arg(&title)
+                            .arg(&body)
+                            .spawn();
+                    }
+                    crate::socket::events::emit(
+                        "notification.created",
+                        json!({
+                            "title": title,
+                            "body": body,
+                            "workspace_uuid": ws_uuid,
+                            "workspace_name": ws_name,
+                        }),
+                    );
+                    let _ = resp_tx.send(ok(
+                        req_id,
+                        json!({"created": true, "workspace_uuid": ws_uuid}),
+                    ));
                 }
                 None => {
                     let _ = resp_tx.send(err(req_id, "not_found", "workspace not found"));

@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod commands;
+pub mod events;
 pub mod handlers;
 
 use std::os::unix::fs::PermissionsExt;
@@ -115,9 +116,113 @@ async fn handle_connection(
     let mut lines = BufReader::new(reader).lines();
 
     while let Ok(Some(line)) = lines.next_line().await {
+        // events.subscribe switches this connection into streaming mode:
+        // an ack line, then one JSON event per line until the client
+        // disconnects or the requested limit is reached.
+        if let Some((req_id, params)) = parse_subscribe(&line) {
+            stream_events(&mut writer, req_id, params).await;
+            return;
+        }
         let response = dispatch_line(&line, &cmd_tx).await;
         if writer.write_all(response.as_bytes()).await.is_err() { break; }
         if writer.write_all(b"\n").await.is_err() { break; }
+    }
+}
+
+/// If `line` is an events.subscribe request, return its (id, params).
+fn parse_subscribe(line: &str) -> Option<(serde_json::Value, serde_json::Value)> {
+    let req: serde_json::Value = serde_json::from_str(line).ok()?;
+    if req.get("method").and_then(|m| m.as_str()) != Some("events.subscribe") {
+        return None;
+    }
+    Some((
+        req.get("id").cloned().unwrap_or(serde_json::Value::Null),
+        req.get("params").cloned().unwrap_or_else(|| serde_json::json!({})),
+    ))
+}
+
+/// Forward bus events to one subscriber until it disconnects or `limit`
+/// events have been delivered. Heartbeat lines (not counted against the
+/// limit) let clients distinguish "quiet" from "dead" and are on by default.
+async fn stream_events(
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+    req_id: serde_json::Value,
+    params: serde_json::Value,
+) {
+    use tokio::io::AsyncWriteExt;
+
+    // Comma-separated exact event names; empty/absent means all events.
+    let names: Vec<String> = params
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(|s| {
+            s.split(',')
+                .map(|n| n.trim().to_string())
+                .filter(|n| !n.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    let limit = params.get("limit").and_then(|v| v.as_u64());
+    let heartbeat = params
+        .get("heartbeat")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+
+    let mut rx = events::EVENT_BUS.subscribe();
+
+    let ack = serde_json::json!({
+        "id": req_id,
+        "ok": true,
+        "result": {"subscribed": true, "name": names, "limit": limit},
+    })
+    .to_string();
+    if writer.write_all(ack.as_bytes()).await.is_err() { return; }
+    if writer.write_all(b"\n").await.is_err() { return; }
+
+    let mut delivered: u64 = 0;
+    let mut ticker = tokio::time::interval(std::time::Duration::from_secs(15));
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    ticker.tick().await; // consume the immediate first tick
+
+    loop {
+        tokio::select! {
+            ev = rx.recv() => {
+                match ev {
+                    Ok(line) => {
+                        if !names.is_empty() {
+                            let name = serde_json::from_str::<serde_json::Value>(&line)
+                                .ok()
+                                .and_then(|v| v.get("event").and_then(|e| e.as_str()).map(String::from))
+                                .unwrap_or_default();
+                            if !names.iter().any(|n| n == &name) {
+                                continue;
+                            }
+                        }
+                        if writer.write_all(line.as_bytes()).await.is_err() { return; }
+                        if writer.write_all(b"\n").await.is_err() { return; }
+                        delivered += 1;
+                        if let Some(l) = limit {
+                            if delivered >= l { return; }
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        let note = serde_json::json!({
+                            "event": "events.lagged", "dropped": n,
+                        }).to_string();
+                        if writer.write_all(note.as_bytes()).await.is_err() { return; }
+                        if writer.write_all(b"\n").await.is_err() { return; }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                }
+            }
+            _ = ticker.tick() => {
+                if heartbeat {
+                    let hb = serde_json::json!({"event": "heartbeat"}).to_string();
+                    if writer.write_all(hb.as_bytes()).await.is_err() { return; }
+                    if writer.write_all(b"\n").await.is_err() { return; }
+                }
+            }
+        }
     }
 }
 
@@ -256,6 +361,14 @@ async fn dispatch_line(
         "notification.clear" => commands::SocketCommand::NotificationClear {
             req_id: req_id.clone(),
             id: params.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            resp_tx,
+        },
+        "notification.create" => commands::SocketCommand::NotificationCreate {
+            req_id: req_id.clone(),
+            title: params.get("title").and_then(|v| v.as_str()).unwrap_or("cmux").to_string(),
+            body: params.get("body").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            workspace: params.get("workspace").and_then(|v| v.as_str()).map(String::from),
+            desktop: params.get("desktop").and_then(|v| v.as_bool()).unwrap_or(true),
             resp_tx,
         },
 

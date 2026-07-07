@@ -413,6 +413,24 @@ fn build_ui(
                 let pane_id = crate::ghostty::callbacks::BELL_PANE_ID.load(std::sync::atomic::Ordering::SeqCst);
                 if pane_id != 0 {
                     state.borrow_mut().set_pane_attention(pane_id);
+                    // Publish to `cmux events` subscribers (reactive orchestration).
+                    let payload = {
+                        let s = state.borrow();
+                        s.split_engines
+                            .iter()
+                            .enumerate()
+                            .find_map(|(i, e)| {
+                                e.root.find_uuid_for_pane(pane_id).map(|uuid| {
+                                    serde_json::json!({
+                                        "surface_uuid": uuid.to_string(),
+                                        "workspace_uuid": s.workspaces[i].uuid.to_string(),
+                                        "workspace_name": s.workspaces[i].name,
+                                    })
+                                })
+                            })
+                            .unwrap_or_else(|| serde_json::json!({"pane_id": pane_id}))
+                    };
+                    crate::socket::events::emit("surface.bell", payload);
                 }
             }
             // Process SSH events

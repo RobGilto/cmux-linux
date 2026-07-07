@@ -104,4 +104,56 @@ impl SocketClient {
             Err(CliError::CommandError(msg.to_string()))
         }
     }
+
+    /// Subscribe to the event stream and invoke `on_line` for each event
+    /// line until the server closes the connection (e.g. `limit` reached)
+    /// or `on_line` returns false. Clears the read timeout: an event stream
+    /// legitimately idles between heartbeats.
+    pub fn subscribe(
+        &mut self,
+        params: serde_json::Value,
+        mut on_line: impl FnMut(&str) -> bool,
+    ) -> Result<(), CliError> {
+        self.reader
+            .get_ref()
+            .set_read_timeout(None)
+            .map_err(|e| CliError::ProtocolError(format!("clear read timeout: {}", e)))?;
+
+        let request = serde_json::json!({
+            "id": self.next_id,
+            "method": "events.subscribe",
+            "params": params,
+        });
+        self.next_id += 1;
+        let mut line = request.to_string();
+        line.push('\n');
+        self.writer
+            .write_all(line.as_bytes())
+            .map_err(|e| CliError::ProtocolError(format!("write failed: {}", e)))?;
+
+        // First line is the subscription ack.
+        let mut ack = String::new();
+        self.reader
+            .read_line(&mut ack)
+            .map_err(|e| CliError::ProtocolError(format!("read failed: {}", e)))?;
+        let ack_v: serde_json::Value = serde_json::from_str(&ack)
+            .map_err(|e| CliError::ProtocolError(format!("invalid ack: {}", e)))?;
+        if !ack_v.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
+            return Err(CliError::CommandError("subscribe rejected".into()));
+        }
+
+        loop {
+            let mut event_line = String::new();
+            let n = self
+                .reader
+                .read_line(&mut event_line)
+                .map_err(|e| CliError::ProtocolError(format!("read failed: {}", e)))?;
+            if n == 0 {
+                return Ok(()); // server closed (limit reached or shutdown)
+            }
+            if !on_line(event_line.trim_end()) {
+                return Ok(());
+            }
+        }
+    }
 }

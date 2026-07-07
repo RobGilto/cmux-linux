@@ -190,6 +190,36 @@ pub enum Commands {
         id: String,
     },
 
+    /// Raise a cmux notification (marks workspace attention, fires
+    /// notification.created for event subscribers, desktop notify)
+    Notify {
+        /// Notification title
+        #[arg(long, default_value = "cmux")]
+        title: String,
+        /// Notification body
+        #[arg(long, default_value = "")]
+        body: String,
+        /// Target workspace UUID (default: active workspace)
+        #[arg(long)]
+        workspace: Option<String>,
+        /// Skip the desktop notification (notify-send)
+        #[arg(long)]
+        no_desktop: bool,
+    },
+    /// Subscribe to the event stream (newline-delimited JSON events)
+    Events {
+        /// Comma-separated event names to include (e.g.
+        /// "notification.created,surface.bell"). Default: all events.
+        #[arg(long)]
+        name: Option<String>,
+        /// Exit after this many events
+        #[arg(long)]
+        limit: Option<u64>,
+        /// Suppress heartbeat lines
+        #[arg(long)]
+        no_heartbeat: bool,
+    },
+
     // -- Browser subcommand group (agent primary interface) --
     /// Browser automation (agent primary interface)
     #[command(subcommand)]
@@ -418,6 +448,27 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
     }
 
     let use_color = format::use_color(&cli.color);
+
+    // Handle Events separately: it streams newline-delimited JSON until the
+    // server closes the connection (--limit) or the pipe breaks.
+    if let Commands::Events { ref name, limit, no_heartbeat } = cli.command {
+        let mut params = serde_json::Map::new();
+        if let Some(ref n) = name {
+            params.insert("name".into(), serde_json::json!(n));
+        }
+        if let Some(l) = limit {
+            params.insert("limit".into(), serde_json::json!(l));
+        }
+        params.insert("heartbeat".into(), serde_json::json!(!no_heartbeat));
+
+        use std::io::Write as _;
+        let mut stdout = std::io::stdout();
+        client.subscribe(serde_json::Value::Object(params), |line| {
+            // A broken pipe (e.g. `| head -1`) ends the stream cleanly.
+            writeln!(stdout, "{}", line).is_ok() && stdout.flush().is_ok()
+        })?;
+        return Ok(());
+    }
 
     // Handle Raw command separately (dynamic method name)
     let (method_name, result) = if let Commands::Raw { ref method, ref params } = cli.command {
@@ -657,6 +708,19 @@ fn command_to_rpc(cmd: &Commands) -> (&'static str, serde_json::Value) {
         Commands::ClearNotification { id } => {
             ("notification.clear", json!({"id": id}))
         }
+        Commands::Notify { title, body, workspace, no_desktop } => {
+            let mut p = serde_json::Map::new();
+            p.insert("title".into(), json!(title));
+            p.insert("body".into(), json!(body));
+            if let Some(ref ws) = workspace {
+                p.insert("workspace".into(), json!(ws));
+            }
+            p.insert("desktop".into(), json!(!no_desktop));
+            ("notification.create", Value::Object(p))
+        }
+        // Events is handled by a dedicated streaming path in run(); this arm
+        // is unreachable but keeps the match exhaustive.
+        Commands::Events { .. } => ("events.subscribe", json!({})),
 
         Commands::Browser(cmd) => browser_command_to_rpc(cmd),
     }
