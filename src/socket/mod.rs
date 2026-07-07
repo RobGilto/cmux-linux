@@ -366,6 +366,26 @@ async fn dispatch_line(
             id: params.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             resp_tx,
         },
+        "workspace.set_status" => commands::SocketCommand::WorkspaceSetStatus {
+            req_id: req_id.clone(),
+            workspace: params.get("workspace").and_then(|v| v.as_str()).map(String::from),
+            state: params.get("state").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            color: params.get("color").and_then(|v| v.as_str()).map(String::from),
+            resp_tx,
+        },
+        "workspace.set_progress" => commands::SocketCommand::WorkspaceSetProgress {
+            req_id: req_id.clone(),
+            workspace: params.get("workspace").and_then(|v| v.as_str()).map(String::from),
+            value: params.get("value").and_then(|v| v.as_f64()).unwrap_or(-1.0),
+            label: params.get("label").and_then(|v| v.as_str()).map(String::from),
+            resp_tx,
+        },
+        "workspace.log" => commands::SocketCommand::WorkspaceLog {
+            req_id: req_id.clone(),
+            workspace: params.get("workspace").and_then(|v| v.as_str()).map(String::from),
+            message: params.get("message").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            resp_tx,
+        },
         "notification.create" => commands::SocketCommand::NotificationCreate {
             req_id: req_id.clone(),
             title: params.get("title").and_then(|v| v.as_str()).unwrap_or("cmux").to_string(),

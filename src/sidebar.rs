@@ -189,6 +189,104 @@ pub fn rebuild_sidebar_row_content(name: &str) -> gtk4::Box {
     hbox
 }
 
+/// Find (or lazily create, in display order) the status widgets inside a
+/// sidebar row's inner vbox: a colored status pill, a progress bar, and a
+/// one-line log label. Rows start without them; the first set-status /
+/// set-progress / log call materializes the widget it needs.
+fn row_status_widgets(
+    row: &gtk4::ListBoxRow,
+) -> Option<(gtk4::Label, gtk4::ProgressBar, gtk4::Label)> {
+    let vbox = row
+        .child()
+        .and_downcast::<gtk4::Box>()?
+        .first_child()
+        .and_downcast::<gtk4::Box>()?;
+
+    let mut pill: Option<gtk4::Label> = None;
+    let mut progress: Option<gtk4::ProgressBar> = None;
+    let mut log: Option<gtk4::Label> = None;
+    let mut child = vbox.first_child();
+    while let Some(w) = child {
+        match w.widget_name().as_str() {
+            "status-pill" => pill = w.clone().downcast::<gtk4::Label>().ok(),
+            "status-progress" => progress = w.clone().downcast::<gtk4::ProgressBar>().ok(),
+            "status-log" => log = w.clone().downcast::<gtk4::Label>().ok(),
+            _ => {}
+        }
+        child = w.next_sibling();
+    }
+
+    let pill = pill.unwrap_or_else(|| {
+        let l = gtk4::Label::new(None);
+        l.set_widget_name("status-pill");
+        l.set_halign(gtk4::Align::Start);
+        l.set_visible(false);
+        l.set_use_markup(true);
+        vbox.append(&l);
+        l
+    });
+    let progress = progress.unwrap_or_else(|| {
+        let p = gtk4::ProgressBar::new();
+        p.set_widget_name("status-progress");
+        p.set_show_text(true);
+        p.set_visible(false);
+        vbox.append(&p);
+        p
+    });
+    let log = log.unwrap_or_else(|| {
+        let l = gtk4::Label::new(None);
+        l.set_widget_name("status-log");
+        l.set_halign(gtk4::Align::Start);
+        l.add_css_class("dim-label");
+        l.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+        l.set_max_width_chars(24);
+        l.set_visible(false);
+        vbox.append(&l);
+        l
+    });
+    Some((pill, progress, log))
+}
+
+/// Set (or clear, with an empty state) the colored status pill on a row.
+pub fn set_row_status(row: &gtk4::ListBoxRow, state: &str, color: &str) {
+    let Some((pill, _, _)) = row_status_widgets(row) else { return };
+    if state.is_empty() {
+        pill.set_visible(false);
+        return;
+    }
+    let esc = glib::markup_escape_text(state);
+    let color_esc = glib::markup_escape_text(color);
+    pill.set_markup(&format!(
+        "<span size='small' background='{}' foreground='#ffffff'> {} </span>",
+        color_esc, esc
+    ));
+    pill.set_visible(true);
+}
+
+/// Set (or clear, with a negative value) the progress bar on a row.
+pub fn set_row_progress(row: &gtk4::ListBoxRow, value: f64, label: Option<&str>) {
+    let Some((_, progress, _)) = row_status_widgets(row) else { return };
+    if value < 0.0 {
+        progress.set_visible(false);
+        return;
+    }
+    progress.set_fraction(value.clamp(0.0, 1.0));
+    progress.set_text(label.filter(|l| !l.is_empty()));
+    progress.set_visible(true);
+}
+
+/// Set (or clear, with an empty message) the one-line log label on a row.
+pub fn set_row_log(row: &gtk4::ListBoxRow, message: &str) {
+    let Some((_, _, log)) = row_status_widgets(row) else { return };
+    if message.is_empty() {
+        log.set_visible(false);
+        return;
+    }
+    log.set_text(message);
+    log.set_tooltip_text(Some(message));
+    log.set_visible(true);
+}
+
 /// Wire the close button for a specific sidebar row.
 /// Called when a row is created (in app_state::create_workspace or after rename rebuild).
 pub fn wire_row_close_button(

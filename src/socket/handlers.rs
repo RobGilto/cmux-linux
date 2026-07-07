@@ -268,6 +268,7 @@ pub fn handle_socket_command(
                 "window.list", "window.current",
                 "notification.list", "notification.clear", "notification.create",
                 "events.subscribe",
+                "workspace.set_status", "workspace.set_progress", "workspace.log",
                 // Browser lifecycle + streaming
                 "browser.open", "browser.close", "browser.list",
                 "browser.stream.enable", "browser.stream.disable",
@@ -955,6 +956,85 @@ pub fn handle_socket_command(
             match idx {
                 Some(i) => {
                     state.borrow_mut().clear_workspace_attention(i);
+                    let _ = resp_tx.send(ok(req_id, json!({})));
+                }
+                None => {
+                    let _ = resp_tx.send(err(req_id, "not_found", "workspace not found"));
+                }
+            }
+        }
+
+        SocketCommand::WorkspaceSetStatus { req_id, workspace, state: status, color, resp_tx } => {
+            // SOCK-05: No focus side effects. Status board write (prompt-13 style).
+            let s = state.borrow();
+            let idx = match workspace {
+                Some(ref uuid) => s.workspaces.iter().position(|ws| ws.uuid.to_string() == *uuid),
+                None => Some(s.active_index),
+            };
+            match idx {
+                Some(i) => {
+                    if let Some(row) = s.sidebar_list.row_at_index(i as i32) {
+                        crate::sidebar::set_row_status(
+                            &row,
+                            &status,
+                            color.as_deref().unwrap_or("#546E7A"),
+                        );
+                    }
+                    let ws_uuid = s.workspaces[i].uuid.to_string();
+                    crate::socket::events::emit(
+                        "workspace.status",
+                        json!({"workspace_uuid": ws_uuid, "state": status, "color": color}),
+                    );
+                    let _ = resp_tx.send(ok(req_id, json!({})));
+                }
+                None => {
+                    let _ = resp_tx.send(err(req_id, "not_found", "workspace not found"));
+                }
+            }
+        }
+
+        SocketCommand::WorkspaceSetProgress { req_id, workspace, value, label, resp_tx } => {
+            // SOCK-05: No focus side effects.
+            let s = state.borrow();
+            let idx = match workspace {
+                Some(ref uuid) => s.workspaces.iter().position(|ws| ws.uuid.to_string() == *uuid),
+                None => Some(s.active_index),
+            };
+            match idx {
+                Some(i) => {
+                    if let Some(row) = s.sidebar_list.row_at_index(i as i32) {
+                        crate::sidebar::set_row_progress(&row, value, label.as_deref());
+                    }
+                    let ws_uuid = s.workspaces[i].uuid.to_string();
+                    crate::socket::events::emit(
+                        "workspace.progress",
+                        json!({"workspace_uuid": ws_uuid, "value": value, "label": label}),
+                    );
+                    let _ = resp_tx.send(ok(req_id, json!({})));
+                }
+                None => {
+                    let _ = resp_tx.send(err(req_id, "not_found", "workspace not found"));
+                }
+            }
+        }
+
+        SocketCommand::WorkspaceLog { req_id, workspace, message, resp_tx } => {
+            // SOCK-05: No focus side effects.
+            let s = state.borrow();
+            let idx = match workspace {
+                Some(ref uuid) => s.workspaces.iter().position(|ws| ws.uuid.to_string() == *uuid),
+                None => Some(s.active_index),
+            };
+            match idx {
+                Some(i) => {
+                    if let Some(row) = s.sidebar_list.row_at_index(i as i32) {
+                        crate::sidebar::set_row_log(&row, &message);
+                    }
+                    let ws_uuid = s.workspaces[i].uuid.to_string();
+                    crate::socket::events::emit(
+                        "workspace.log",
+                        json!({"workspace_uuid": ws_uuid, "message": message}),
+                    );
                     let _ = resp_tx.send(ok(req_id, json!({})));
                 }
                 None => {

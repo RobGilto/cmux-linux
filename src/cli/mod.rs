@@ -203,6 +203,36 @@ pub enum Commands {
         id: String,
     },
 
+    /// Set a workspace's colored status pill in the sidebar (empty state clears)
+    SetStatus {
+        /// Status text, e.g. "working", "done", "error"
+        state: String,
+        /// Pill background color (hex or named), e.g. "#1565C0"
+        #[arg(long, default_value = "#546E7A")]
+        color: String,
+        /// Target workspace UUID (default: active workspace)
+        #[arg(long)]
+        workspace: Option<String>,
+    },
+    /// Set a workspace's sidebar progress bar (negative value clears)
+    SetProgress {
+        /// Progress 0.0–1.0
+        value: f64,
+        /// Text shown on the bar
+        #[arg(long)]
+        label: Option<String>,
+        /// Target workspace UUID (default: active workspace)
+        #[arg(long)]
+        workspace: Option<String>,
+    },
+    /// Set a workspace's one-line sidebar log (empty message clears)
+    Log {
+        /// Log message
+        message: String,
+        /// Target workspace UUID (default: active workspace)
+        #[arg(long)]
+        workspace: Option<String>,
+    },
     /// Raise a cmux notification (marks workspace attention, fires
     /// notification.created for event subscribers, desktop notify)
     Notify {
@@ -743,6 +773,34 @@ fn command_to_rpc(cmd: &Commands) -> (&'static str, serde_json::Value) {
         Commands::ListNotifications => ("notification.list", json!({})),
         Commands::ClearNotification { id } => {
             ("notification.clear", json!({"id": id}))
+        }
+        Commands::SetStatus { state, color, workspace } => {
+            let mut p = serde_json::Map::new();
+            p.insert("state".into(), json!(state));
+            p.insert("color".into(), json!(color));
+            if let Some(ref ws) = workspace {
+                p.insert("workspace".into(), json!(ws));
+            }
+            ("workspace.set_status", Value::Object(p))
+        }
+        Commands::SetProgress { value, label, workspace } => {
+            let mut p = serde_json::Map::new();
+            p.insert("value".into(), json!(value));
+            if let Some(ref l) = label {
+                p.insert("label".into(), json!(l));
+            }
+            if let Some(ref ws) = workspace {
+                p.insert("workspace".into(), json!(ws));
+            }
+            ("workspace.set_progress", Value::Object(p))
+        }
+        Commands::Log { message, workspace } => {
+            let mut p = serde_json::Map::new();
+            p.insert("message".into(), json!(message));
+            if let Some(ref ws) = workspace {
+                p.insert("workspace".into(), json!(ws));
+            }
+            ("workspace.log", Value::Object(p))
         }
         Commands::Notify { title, body, workspace, no_desktop } => {
             let mut p = serde_json::Map::new();
