@@ -298,7 +298,11 @@ impl AppState {
 
     /// Close the workspace at `index`. Removes the sidebar row and GtkStack page.
     /// Returns false if there is only one workspace (cannot close the last one).
-    /// The caller (Plan 04) is responsible for calling ghostty_surface_free on all panes first.
+    /// Ghostty surfaces are NOT freed here: the GLArea unrealize handler owns
+    /// each surface (realize creates it, unrealize frees it), and removing the
+    /// GtkStack page below unrealizes every GLArea in the workspace. Freeing
+    /// here too double-frees any pointer the split tree knows about (e.g.
+    /// after sync_surfaces_from_registry on session restore).
     pub fn close_workspace(&mut self, index: usize) -> bool {
         if self.workspaces.len() <= 1 {
             return false; // Cannot close the last workspace
@@ -311,21 +315,6 @@ impl AppState {
             }
         }
 
-        // Before removing from workspaces, free all Ghostty surfaces in the split engine.
-        if let Some(engine) = self.split_engines.get(index) {
-            let mut surfaces = Vec::new();
-            engine.root.collect_surfaces(&mut surfaces);
-            for surface in surfaces {
-                if !surface.is_null() {
-                    unsafe {
-                        crate::ghostty::ffi::ghostty_surface_free(surface);
-                    }
-                    if let Ok(mut reg) = crate::ghostty::callbacks::SURFACE_REGISTRY.lock() {
-                        reg.remove(&(surface as usize));
-                    }
-                }
-            }
-        }
         self.split_engines.remove(index);
 
         let workspace = self.workspaces.remove(index);
