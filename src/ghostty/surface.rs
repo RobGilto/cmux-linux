@@ -38,6 +38,7 @@ pub fn create_surface(
     inherited_config: Option<ffi::ghostty_surface_config_s>,
     pane_id: u64,
     io_mode: SurfaceIoMode,
+    cwd: Option<String>,
 ) -> (gtk4::GLArea, Rc<RefCell<Option<ffi::ghostty_surface_t>>>) {
     use gtk4::prelude::*;
     use std::sync::atomic::Ordering;
@@ -96,6 +97,7 @@ pub fn create_surface(
         let cell = surface_cell.clone();
         let userdata_cell = ssh_userdata_cell.clone();
         let io_mode = io_mode;
+        let cwd = cwd.clone();
         move |area| {
             eprintln!(
                 "cmux: GLArea {:p} realize for pane_id={} — making GL context current",
@@ -205,6 +207,19 @@ pub fn create_surface(
                         std::sync::Arc::into_raw(io_write_ctx.clone());
                     surface_config.io_write_userdata = ctx_raw as *mut std::ffi::c_void;
                     *userdata_cell.borrow_mut() = Some(ctx_raw);
+                }
+
+                // Start the shell in the requested directory (issue: split
+                // children and layout/agent panes must open in their project
+                // dir, not $HOME). ghostty reads working_directory at surface
+                // creation; the CString must outlive ghostty_surface_new, so
+                // bind it here. Overrides any inherited path when set.
+                let _cwd_cstr = cwd
+                    .as_deref()
+                    .filter(|c| !c.is_empty())
+                    .and_then(|c| std::ffi::CString::new(c).ok());
+                if let Some(ref cstr) = _cwd_cstr {
+                    surface_config.working_directory = cstr.as_ptr();
                 }
 
                 eprintln!("cmux: calling ghostty_surface_new");

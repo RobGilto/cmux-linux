@@ -458,32 +458,20 @@ pub fn handle_socket_command(
                     }
                 }
             } else {
-                // Local workspace (existing behavior), plus optional --name
-                // and --cwd (delivered as a `cd` once the shell is up).
-                let id = state.borrow_mut().create_workspace();
-                let (uuid_str, first_surface) = {
+                // Local workspace, plus optional --name and --cwd. The shell
+                // now starts in --cwd (working_directory on the surface), so
+                // no deferred `cd` and no split-timing race.
+                let id = state.borrow_mut().create_workspace_in(cwd.clone());
+                let uuid_str = {
                     let mut s = state.borrow_mut();
-                    let idx = s.workspaces.iter().position(|ws| ws.id == id).unwrap_or(0);
                     // create_workspace leaves the new workspace active, so
                     // rename_active targets it (same pattern as WorkspaceRename).
                     if let Some(ref n) = name {
                         s.rename_active(n.clone());
                     }
-                    let first = s
-                        .split_engines
-                        .get(idx)
-                        .and_then(|e| e.root.find_uuid_for_pane(
-                            e.all_panes().first().map(|(_, pid, _)| *pid).unwrap_or(0),
-                        ))
-                        .map(|u| u.to_string());
-                    (s.workspaces[idx].uuid.to_string(), first)
+                    let idx = s.workspaces.iter().position(|ws| ws.id == id).unwrap_or(0);
+                    s.workspaces[idx].uuid.to_string()
                 };
-                if let (Some(dir), Some(surf_uuid)) = (cwd.as_ref(), first_surface.as_ref()) {
-                    schedule_startup_commands(
-                        state.clone(),
-                        vec![(surf_uuid.clone(), format!("cd '{}'", dir))],
-                    );
-                }
                 crate::socket::events::emit(
                     "workspace.created",
                     json!({"uuid": uuid_str, "name": name, "layout": false}),

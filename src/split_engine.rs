@@ -398,9 +398,13 @@ impl SplitEngine {
             SplitNodeData::Leaf { surface_uuid, agent_provider, agent_session_id, cwd, .. } => {
                 let pane_id = *next_pane_id;
                 *next_pane_id += 1;
-                // Create surface — realize callback will create Ghostty surface and wire registries
+                // Create surface in the leaf's saved directory (session
+                // restore, declarative layouts, and agent surfaces all flow
+                // through here). Shell starts there, so splits off it inherit
+                // the right cwd and agents find their per-project session.
+                let leaf_cwd = if cwd.is_empty() { None } else { Some(cwd.clone()) };
                 let (gl_area, _surface_cell) =
-                    crate::ghostty::surface::create_surface(app, ghostty_app, None, pane_id, crate::ghostty::surface::SurfaceIoMode::Exec);
+                    crate::ghostty::surface::create_surface(app, ghostty_app, None, pane_id, crate::ghostty::surface::SurfaceIoMode::Exec, leaf_cwd);
                 // Phase 9: Attach right-click context menu (D-08)
                 attach_terminal_context_menu(&gl_area);
                 // D-06: preserve UUID from session
@@ -617,6 +621,9 @@ impl SplitEngine {
             Some(inherited_config),
             new_pane_id,
             crate::ghostty::surface::SurfaceIoMode::Exec,
+            // cwd inherited via inherited_config (parent starts in the right
+            // directory now, so ghostty_surface_inherited_config carries it).
+            None,
         );
         // Phase 9: Attach right-click context menu (D-08)
         attach_terminal_context_menu(&new_gl_area);

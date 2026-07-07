@@ -89,6 +89,12 @@ impl AppState {
     /// page to the GtkStack. The actual GLArea/split root is added by the caller (Plan 04).
     /// Returns the new workspace id.
     pub fn create_workspace(&mut self) -> u64 {
+        self.create_workspace_in(None)
+    }
+
+    /// Create a new workspace whose first pane's shell starts in `cwd`.
+    /// `cwd = None` starts in the shell's default directory.
+    pub fn create_workspace_in(&mut self, cwd: Option<String>) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
         let display_number = self.next_display_number;
@@ -114,7 +120,7 @@ impl AppState {
             id, pane_id
         );
         let (gl_area, surface_cell) =
-            crate::ghostty::surface::create_surface(&self.gtk_app, self.ghostty_app, None, pane_id, crate::ghostty::surface::SurfaceIoMode::Exec);
+            crate::ghostty::surface::create_surface(&self.gtk_app, self.ghostty_app, None, pane_id, crate::ghostty::surface::SurfaceIoMode::Exec, cwd);
         let engine = SplitEngine::new(
             self.gtk_app.clone(),
             self.ghostty_app,
@@ -243,6 +249,7 @@ impl AppState {
             None,
             pane_id,
             crate::ghostty::surface::SurfaceIoMode::Manual { io_write_ctx: io_ctx.clone() },
+            None,
         );
         let engine = SplitEngine::new(
             self.gtk_app.clone(),
