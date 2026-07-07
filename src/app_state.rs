@@ -521,6 +521,8 @@ impl AppState {
                                 surface_uuid: uuid::Uuid::nil(),
                                 shell: String::new(),
                                 cwd: String::new(),
+                                agent_provider: None,
+                                agent_session_id: None,
                             }
                         };
                         // D-04: save active_pane_uuid per workspace

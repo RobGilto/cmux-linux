@@ -11,6 +11,7 @@ mod sidebar;
 mod shortcuts;
 mod socket;
 mod session;
+mod agent;
 mod ssh;
 mod config;
 mod browser;
@@ -364,11 +365,15 @@ fn build_ui(
             if session.version >= 2 {
                 let state_for_sync = state.clone();
                 gtk4::glib::idle_add_local_once(move || {
-                    let mut s = state_for_sync.borrow_mut();
-                    for engine in &mut s.split_engines {
-                        engine.sync_surfaces_from_registry();
+                    {
+                        let mut s = state_for_sync.borrow_mut();
+                        for engine in &mut s.split_engines {
+                            engine.sync_surfaces_from_registry();
+                        }
+                        eprintln!("cmux: synced surface pointers from registry after restore");
                     }
-                    eprintln!("cmux: synced surface pointers from registry after restore");
+                    // Resume any restored agent surfaces (prompt 10 auto-resume).
+                    crate::socket::handlers::schedule_agent_resumes(state_for_sync.clone());
                 });
             }
         } else {

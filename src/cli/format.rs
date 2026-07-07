@@ -211,6 +211,30 @@ fn format_capabilities(result: &Value, color: bool) -> String {
 }
 
 /// Format notification list response.
+fn format_agent_list(result: &Value, _color: bool) -> String {
+    let sessions = match result.get("sessions").and_then(|v| v.as_array()) {
+        Some(arr) => arr,
+        None => return format_fallback(result),
+    };
+    if sessions.is_empty() {
+        return "No agent sessions".to_string();
+    }
+    let mut lines = Vec::new();
+    for s in sessions {
+        let provider = s.get("provider").and_then(|v| v.as_str()).unwrap_or("?");
+        let uuid = s.get("surface_uuid").and_then(|v| v.as_str()).unwrap_or("");
+        let uuid_short = &uuid[..uuid.len().min(8)];
+        let ws = s.get("workspace_name").and_then(|v| v.as_str()).unwrap_or("");
+        let sid = s.get("session_id").and_then(|v| v.as_str());
+        let resume = match sid {
+            Some(id) => format!("session {} (resumable)", id),
+            None => "no session captured yet".to_string(),
+        };
+        lines.push(format!("{} [{}] {} — {}", uuid_short, provider, ws, resume));
+    }
+    lines.join("\n")
+}
+
 fn format_notification_list(result: &Value, color: bool) -> String {
     let notifications = match result.get("notifications").and_then(|v| v.as_array()) {
         Some(arr) => arr,
@@ -328,6 +352,24 @@ pub fn format_response(method: &str, result: &Value, json_mode: bool, color: boo
         "system.identify" => format_identify(result),
         "system.capabilities" => format_capabilities(result, color),
         "notification.list" => format_notification_list(result, color),
+        "agent.list" => format_agent_list(result, color),
+        "agent.hooks_setup" => {
+            let installed = result
+                .get("installed")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+            if installed.is_empty() {
+                "No hooks installed".to_string()
+            } else {
+                format!("Installed session-capture hooks for: {}", installed)
+            }
+        }
         "debug.layout" => serde_json::to_string_pretty(result).unwrap_or_default(),
 
         // Mutation commands: show success message

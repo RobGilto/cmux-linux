@@ -366,6 +366,21 @@ async fn dispatch_line(
             id: params.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             resp_tx,
         },
+        "agent.hooks_setup" => commands::SocketCommand::AgentHooksSetup {
+            req_id: req_id.clone(),
+            resp_tx,
+        },
+        "agent.list" => commands::SocketCommand::AgentList {
+            req_id: req_id.clone(),
+            resp_tx,
+        },
+        "agent.report_session" => commands::SocketCommand::AgentReportSession {
+            req_id: req_id.clone(),
+            surface: params.get("surface").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            provider: params.get("provider").and_then(|v| v.as_str()).map(String::from),
+            session_id: params.get("session_id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            resp_tx,
+        },
         "workspace.set_status" => commands::SocketCommand::WorkspaceSetStatus {
             req_id: req_id.clone(),
             workspace: params.get("workspace").and_then(|v| v.as_str()).map(String::from),

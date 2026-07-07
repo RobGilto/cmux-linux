@@ -70,11 +70,15 @@ pub enum Commands {
         #[arg(long)]
         cwd: Option<String>,
         /// Declarative layout JSON. Nodes:
-        /// {"type":"terminal","cwd":"...","command":"..."} or
+        /// {"type":"terminal","cwd":"...","command":"...","agent":"claude"} or
         /// {"type":"split","direction":"horizontal|vertical","ratio":0.5,
         ///  "start":{...},"end":{...}}
         #[arg(long)]
         layout: Option<String>,
+        /// Boot a native agent session in the workspace's single pane
+        /// (e.g. "claude"), tracked for resume across restarts
+        #[arg(long)]
+        agent: Option<String>,
     },
     /// Select a workspace by ID
     SelectWorkspace {
@@ -249,6 +253,14 @@ pub enum Commands {
         #[arg(long)]
         no_desktop: bool,
     },
+    /// Install session-capture hooks for agent CLIs (Claude Code, ...)
+    #[command(subcommand)]
+    Hooks(HooksCommand),
+    /// List captured agent sessions (provider, session id, resumable)
+    AgentSessions,
+    /// Agent session helpers (mostly invoked by hooks)
+    #[command(subcommand)]
+    Agent(AgentCommand),
     /// Subscribe to the event stream (newline-delimited JSON events)
     Events {
         /// Comma-separated event names to include (e.g.
@@ -268,6 +280,25 @@ pub enum Commands {
     #[command(subcommand)]
     Browser(BrowserCommand),
 
+}
+
+/// `cmux hooks <action>` — manage agent session-capture hooks.
+#[derive(Subcommand)]
+pub enum HooksCommand {
+    /// Install session-capture hooks into agent CLI configs
+    Setup {
+        /// Assume yes to prompts (accepted for macOS parity; always yes here)
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
+/// `cmux agent <action>` — agent session helpers.
+#[derive(Subcommand)]
+pub enum AgentCommand {
+    /// Report a captured native session id (invoked by the SessionStart hook;
+    /// reads the provider's hook JSON on stdin, uses $CMUX_PANE)
+    ReportSession,
 }
 
 /// Browser subcommands for `cmux browser <action>` / `cmux browser <surface> <action>`.
@@ -492,6 +523,36 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
 
     let use_color = format::use_color(&cli.color);
 
+    // Agent report-session: invoked by the provider's SessionStart hook.
+    // Reads the hook's JSON from stdin (for session_id) and the CMUX_PANE env
+    // var cmux set when it launched the agent (for the target surface).
+    if let Commands::Agent(AgentCommand::ReportSession) = cli.command {
+        use std::io::Read as _;
+        let mut buf = String::new();
+        let _ = std::io::stdin().read_to_string(&mut buf);
+        let hook: serde_json::Value = serde_json::from_str(&buf).unwrap_or(serde_json::Value::Null);
+        let session_id = hook
+            .get("session_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let surface = std::env::var("CMUX_PANE").unwrap_or_default();
+        if surface.is_empty() || session_id.is_empty() {
+            // Not in an agent pane, or no id — succeed quietly so we never
+            // break the agent's startup.
+            return Ok(());
+        }
+        let _ = client.call(
+            "agent.report_session",
+            serde_json::json!({
+                "surface": surface,
+                "provider": "claude",
+                "session_id": session_id,
+            }),
+        );
+        return Ok(());
+    }
+
     // Handle Events separately: it streams newline-delimited JSON until the
     // server closes the connection (--limit) or the pipe breaks.
     if let Commands::Events { ref name, limit, no_heartbeat } = cli.command {
@@ -666,13 +727,24 @@ fn command_to_rpc(cmd: &Commands) -> (&'static str, serde_json::Value) {
 
         Commands::Raw { .. } => unreachable!("Raw handled separately"),
 
-        Commands::NewWorkspace { name, cwd, layout } => {
+        Commands::NewWorkspace { name, cwd, layout, agent } => {
             let mut p = serde_json::Map::new();
             if let Some(ref n) = name {
                 p.insert("name".into(), json!(n));
             }
             if let Some(ref d) = cwd {
                 p.insert("cwd".into(), json!(d));
+            }
+            // --agent is sugar for a single-terminal agent layout.
+            if let Some(ref a) = agent {
+                let mut term = serde_json::Map::new();
+                term.insert("type".into(), json!("terminal"));
+                term.insert("agent".into(), json!(a));
+                if let Some(ref d) = cwd {
+                    term.insert("cwd".into(), json!(d));
+                }
+                p.insert("layout".into(), Value::Object(term));
+                return ("workspace.create", Value::Object(p));
             }
             if let Some(ref l) = layout {
                 match serde_json::from_str::<Value>(l) {
@@ -774,6 +846,10 @@ fn command_to_rpc(cmd: &Commands) -> (&'static str, serde_json::Value) {
         Commands::ClearNotification { id } => {
             ("notification.clear", json!({"id": id}))
         }
+        Commands::Hooks(HooksCommand::Setup { .. }) => ("agent.hooks_setup", json!({})),
+        Commands::AgentSessions => ("agent.list", json!({})),
+        // Agent(ReportSession) is handled by a dedicated stdin path in run().
+        Commands::Agent(AgentCommand::ReportSession) => ("agent.report_session", json!({})),
         Commands::SetStatus { state, color, workspace } => {
             let mut p = serde_json::Map::new();
             p.insert("state".into(), json!(state));

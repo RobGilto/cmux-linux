@@ -59,6 +59,15 @@ pub enum SocketCommand {
     // -- notification.* (Phase 4: NOTF-01, NOTF-02) --
     NotificationList   { req_id: Value, resp_tx: RespTx },
     NotificationClear  { req_id: Value, id: String, resp_tx: RespTx },
+    AgentHooksSetup { req_id: Value, resp_tx: RespTx },
+    AgentList { req_id: Value, resp_tx: RespTx },
+    AgentReportSession {
+        req_id: Value,
+        surface: String,
+        provider: Option<String>,
+        session_id: String,
+        resp_tx: RespTx,
+    },
     WorkspaceSetStatus {
         req_id: Value,
         workspace: Option<String>,

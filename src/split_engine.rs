@@ -395,7 +395,7 @@ impl SplitEngine {
             return None;
         }
         match data {
-            SplitNodeData::Leaf { surface_uuid, .. } => {
+            SplitNodeData::Leaf { surface_uuid, agent_provider, agent_session_id, .. } => {
                 let pane_id = *next_pane_id;
                 *next_pane_id += 1;
                 // Create surface — realize callback will create Ghostty surface and wire registries
@@ -405,6 +405,13 @@ impl SplitEngine {
                 attach_terminal_context_menu(&gl_area);
                 // D-06: preserve UUID from session
                 let uuid = *surface_uuid;
+                // Re-register agent surfaces so resume + re-save survive restart.
+                if let Some(p) = agent_provider
+                    .as_deref()
+                    .and_then(crate::agent::Provider::from_str)
+                {
+                    crate::agent::register(&uuid.to_string(), p, agent_session_id.clone());
+                }
                 let surface_placeholder: ffi::ghostty_surface_t = std::ptr::null_mut();
                 Some(SplitNode::Leaf {
                     pane_id,
@@ -1454,6 +1461,14 @@ pub enum SplitNodeData {
         shell: String,
         /// Absolute working directory path (best-effort; may be empty if /proc unavailable)
         cwd: String,
+        /// Agent provider running in this pane, if it's a native agent
+        /// surface (e.g. "claude"). None for plain shells.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_provider: Option<String>,
+        /// Captured native session id for resume, if the agent's hook has
+        /// reported one. None until captured.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_session_id: Option<String>,
     },
     Split {
         /// "horizontal" or "vertical"
@@ -1529,11 +1544,14 @@ impl SplitNode {
             SplitNode::Leaf { pane_id, uuid, surface, .. } => {
                 let cwd = get_surface_cwd(*surface);
                 let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+                let agent = crate::agent::get(&uuid.to_string());
                 SplitNodeData::Leaf {
                     pane_id: *pane_id,
                     surface_uuid: *uuid,
                     shell,
                     cwd,
+                    agent_provider: agent.as_ref().map(|a| a.provider.as_str().to_string()),
+                    agent_session_id: agent.and_then(|a| a.session_id),
                 }
             },
             SplitNode::Preview { .. } => {
@@ -1544,6 +1562,8 @@ impl SplitNode {
                     surface_uuid: Uuid::nil(),
                     shell: String::new(),
                     cwd: String::new(),
+                    agent_provider: None,
+                    agent_session_id: None,
                 }
             },
             SplitNode::Split { orientation, paned, start, end, .. } => {
