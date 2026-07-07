@@ -259,6 +259,9 @@ async fn dispatch_line(
         "workspace.create" => commands::SocketCommand::WorkspaceCreate {
             req_id: req_id.clone(),
             remote_target: params.get("remote_target").and_then(|v| v.as_str()).map(String::from),
+            name: params.get("name").and_then(|v| v.as_str()).map(String::from),
+            cwd: params.get("cwd").and_then(|v| v.as_str()).map(String::from),
+            layout: params.get("layout").cloned().filter(|v| !v.is_null()),
             resp_tx,
         },
         "workspace.select" => commands::SocketCommand::WorkspaceSelect {

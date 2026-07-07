@@ -62,7 +62,20 @@ pub enum Commands {
 
     // -- Workspace management --
     /// Create a new workspace
-    NewWorkspace,
+    NewWorkspace {
+        /// Workspace name
+        #[arg(long)]
+        name: Option<String>,
+        /// Working directory for the workspace's terminals
+        #[arg(long)]
+        cwd: Option<String>,
+        /// Declarative layout JSON. Nodes:
+        /// {"type":"terminal","cwd":"...","command":"..."} or
+        /// {"type":"split","direction":"horizontal|vertical","ratio":0.5,
+        ///  "start":{...},"end":{...}}
+        #[arg(long)]
+        layout: Option<String>,
+    },
     /// Select a workspace by ID
     SelectWorkspace {
         /// Workspace UUID
@@ -623,7 +636,30 @@ fn command_to_rpc(cmd: &Commands) -> (&'static str, serde_json::Value) {
 
         Commands::Raw { .. } => unreachable!("Raw handled separately"),
 
-        Commands::NewWorkspace => ("workspace.create", json!({})),
+        Commands::NewWorkspace { name, cwd, layout } => {
+            let mut p = serde_json::Map::new();
+            if let Some(ref n) = name {
+                p.insert("name".into(), json!(n));
+            }
+            if let Some(ref d) = cwd {
+                p.insert("cwd".into(), json!(d));
+            }
+            if let Some(ref l) = layout {
+                match serde_json::from_str::<Value>(l) {
+                    Ok(v) => {
+                        p.insert("layout".into(), v);
+                    }
+                    Err(e) => {
+                        // Surface the parse error via the server's validation
+                        // path (send the raw string; server rejects objects
+                        // only, so reject here instead).
+                        eprintln!("error: --layout is not valid JSON: {}", e);
+                        std::process::exit(2);
+                    }
+                }
+            }
+            ("workspace.create", Value::Object(p))
+        }
         Commands::SelectWorkspace { id } => ("workspace.select", json!({"id": id})),
         Commands::CloseWorkspace { id } => ("workspace.close", json!({"id": id})),
         Commands::RenameWorkspace { id, name } => {
