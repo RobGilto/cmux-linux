@@ -32,7 +32,7 @@ pub enum SocketCommand {
     SurfaceClose     { req_id: Value, id: String, resp_tx: RespTx },
     SurfaceSendText  { req_id: Value, id: Option<String>, text: String, resp_tx: RespTx },
     SurfaceSendKey   { req_id: Value, id: Option<String>, key: String, resp_tx: RespTx },
-    SurfaceReadText  { req_id: Value, id: Option<String>, resp_tx: RespTx },
+    SurfaceReadText  { req_id: Value, id: Option<String>, scrollback: bool, resp_tx: RespTx },
     SurfaceHealth    { req_id: Value, id: Option<String>, resp_tx: RespTx },
     SurfaceRefresh   { req_id: Value, id: Option<String>, resp_tx: RespTx },
 

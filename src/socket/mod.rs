@@ -214,6 +214,10 @@ async fn dispatch_line(
         "surface.read_text" => commands::SocketCommand::SurfaceReadText {
             req_id: req_id.clone(),
             id: params.get("id").and_then(|v| v.as_str()).map(String::from),
+            scrollback: params
+                .get("scrollback")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
             resp_tx,
         },
         "surface.health" => commands::SocketCommand::SurfaceHealth {

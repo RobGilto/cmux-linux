@@ -439,9 +439,12 @@ pub fn handle_socket_command(
             let _ = resp_tx.send(ok(req_id, json!({"surfaces": panes})));
         }
 
-        SocketCommand::SurfaceSplit { req_id, id: _, direction, resp_tx } => {
-            // Split the active pane in the active workspace.
-            // SplitEngine::split_active splits by orientation and returns new pane_id.
+        SocketCommand::SurfaceSplit { req_id, id, direction, resp_tx } => {
+            // Split a specific surface (by UUID) or the active pane in the
+            // active workspace. SplitEngine only knows how to split its
+            // active pane, so an explicit target becomes the active pane
+            // first — which matches GUI semantics (splitting focuses the
+            // split location anyway).
             let orientation = if direction == "vertical" {
                 gtk4::Orientation::Vertical
             } else {
@@ -451,6 +454,19 @@ pub fn handle_socket_command(
                 let mut s = state.borrow_mut();
                 let idx = s.active_index;
                 if let Some(engine) = s.split_engines.get_mut(idx) {
+                    if let Some(ref uuid_str) = id {
+                        match engine.find_pane_id_by_uuid(uuid_str) {
+                            Some(pid) => engine.active_pane_id = pid,
+                            None => {
+                                let _ = resp_tx.send(err(
+                                    req_id,
+                                    "not_found",
+                                    "surface not found",
+                                ));
+                                return;
+                            }
+                        }
+                    }
                     engine.split_active(orientation)
                         .and_then(|new_pane_id| {
                             // Find the uuid of the newly created pane.
@@ -561,24 +577,30 @@ pub fn handle_socket_command(
             }
         }
 
-        SocketCommand::SurfaceReadText { req_id, id, resp_tx } => {
+        SocketCommand::SurfaceReadText { req_id, id, scrollback, resp_tx } => {
             // SOCK-05: No focus side effects.
-            // Reads the visible viewport via ghostty_surface_read_text (exported
-            // by the cmux ghostty fork; locks renderer state internally).
+            // Reads via ghostty_surface_read_text (exported by the cmux ghostty
+            // fork; locks renderer state internally). VIEWPORT = visible page;
+            // SCREEN = full buffer including scrollback history.
             let surface = resolve_surface_ptr(&state.borrow(), id.as_ref());
             match surface {
                 Some(surf) if !surf.is_null() => {
                     use crate::ghostty::ffi as g;
+                    let tag = if scrollback {
+                        g::ghostty_point_tag_e_GHOSTTY_POINT_SCREEN
+                    } else {
+                        g::ghostty_point_tag_e_GHOSTTY_POINT_VIEWPORT
+                    };
                     let text = unsafe {
                         let sel = g::ghostty_selection_s {
                             top_left: g::ghostty_point_s {
-                                tag: g::ghostty_point_tag_e_GHOSTTY_POINT_VIEWPORT,
+                                tag,
                                 coord: g::ghostty_point_coord_e_GHOSTTY_POINT_COORD_TOP_LEFT,
                                 x: 0,
                                 y: 0,
                             },
                             bottom_right: g::ghostty_point_s {
-                                tag: g::ghostty_point_tag_e_GHOSTTY_POINT_VIEWPORT,
+                                tag,
                                 coord: g::ghostty_point_coord_e_GHOSTTY_POINT_COORD_BOTTOM_RIGHT,
                                 x: 0,
                                 y: 0,

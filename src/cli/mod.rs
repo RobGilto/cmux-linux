@@ -137,6 +137,10 @@ pub enum Commands {
         /// Target surface ID (default: focused)
         #[arg(long)]
         id: Option<String>,
+        /// Read the full screen buffer including scrollback history,
+        /// not just the visible viewport
+        #[arg(long)]
+        scrollback: bool,
     },
     /// Check surface health
     Health {
@@ -608,10 +612,13 @@ fn command_to_rpc(cmd: &Commands) -> (&'static str, serde_json::Value) {
             }
             ("surface.send_key", Value::Object(p))
         }
-        Commands::ReadText { id } => {
+        Commands::ReadText { id, scrollback } => {
             let mut p = serde_json::Map::new();
             if let Some(ref id) = id {
                 p.insert("id".into(), json!(id));
+            }
+            if *scrollback {
+                p.insert("scrollback".into(), json!(true));
             }
             ("surface.read_text", Value::Object(p))
         }
