@@ -981,7 +981,12 @@ typedef struct {
 } ghostty_action_s;
 
 typedef void (*ghostty_runtime_wakeup_cb)(void*);
-typedef void (*ghostty_runtime_read_clipboard_cb)(void*,
+/* Returns true if the clipboard read was started (ghostty then keeps the
+ * request state alive until complete_clipboard_request is called), false if
+ * the request did not start (ghostty frees the request state itself). This
+ * MUST match ghostty's `opts.read_clipboard` bool return — declaring it void
+ * lets ghostty read a garbage `started` value and double-free the request. */
+typedef bool (*ghostty_runtime_read_clipboard_cb)(void*,
                                                   ghostty_clipboard_e,
                                                   void*);
 typedef void (*ghostty_runtime_confirm_read_clipboard_cb)(
