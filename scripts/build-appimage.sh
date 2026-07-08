@@ -164,6 +164,13 @@ if [[ -z "${GDK_BACKEND:-}" ]]; then
         export GDK_BACKEND=x11
     fi
 fi
+# GDK binds the GLES API at EGL init by default and then cannot hand out the
+# desktop OpenGL context libghostty's renderer requires, so GLArea realize
+# fails with "Unable to create a GL context" on NVIDIA proprietary drivers
+# (regardless of backend). gl-prefer-gl makes GDK bind desktop GL up front.
+if command -v nvidia-smi >/dev/null 2>&1; then
+    export GDK_DEBUG="${GDK_DEBUG:+${GDK_DEBUG},}gl-prefer-gl"
+fi
 exec "${HERE}/usr/bin/cmux-app.bin" "$@"
 APPRUN
 chmod +x "${APP_DIR}/AppRun"

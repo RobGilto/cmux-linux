@@ -64,6 +64,19 @@ at `target/release/agent-browser`. Browser commands (`cmux browser …`)
 require this binary to be on `$PATH` or under
 `~/.local/share/cmux/bin/agent-browser`.
 
+### Troubleshooting: blank window / "Unable to create a GL context" on NVIDIA
+
+On NVIDIA proprietary drivers, GDK binds the GLES API at EGL init by default
+and then cannot create the desktop OpenGL context libghostty's renderer
+requires, so the terminal pane fails with `GLArea realize error: Unable to
+create a GL context` (on both X11 and Wayland). The packaged launch wrappers
+handle this automatically; if you run the binary directly or use an older
+build, launch with:
+
+```bash
+GDK_DEBUG=gl-prefer-gl cmux-app
+```
+
 ## Browser Automation
 
 Agents running inside cmux can discover and use browser automation via the `cmux browser` CLI:
@@ -73,16 +86,16 @@ Agents running inside cmux can discover and use browser automation via the `cmux
 cmux browser open slashdot.org            # returns surface:1 handle
 
 # Interact with the page
-cmux browser surface:1 snapshot --interactive  # accessibility tree with element refs
-cmux browser surface:1 click e3               # click element by ref
-cmux browser surface:1 fill e5 "search term"  # fill input field
-cmux browser surface:1 eval 'document.title'  # evaluate JavaScript
+cmux browser snapshot surface:1 --interactive  # accessibility tree with element refs
+cmux browser click surface:1 e3               # click element by ref
+cmux browser fill surface:1 e5 "search term"  # fill input field
+cmux browser eval surface:1 'document.title'  # evaluate JavaScript
 
 # Navigation
-cmux browser surface:1 goto example.com
-cmux browser surface:1 back
-cmux browser surface:1 forward
-cmux browser surface:1 reload
+cmux browser goto surface:1 example.com
+cmux browser back surface:1
+cmux browser forward surface:1
+cmux browser reload surface:1
 
 # Management
 cmux browser list                          # list browser surfaces
