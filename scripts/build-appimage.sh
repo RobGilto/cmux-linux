@@ -77,10 +77,15 @@ if [[ ! -f "${TARGET_DIR}/cmux-app" ]] \
     (cd "${REPO_ROOT}" && cargo build --release --workspace)
 fi
 
-# cmuxd-remote (Go)
+# cmuxd-remote (Go) — optional (remote-SSH mode only). Skip if Go is absent
+# rather than aborting the whole image; the copy below is already guarded.
 if [[ ! -f "${REPO_ROOT}/daemon/remote/cmuxd-remote" ]]; then
-    echo "==> building cmuxd-remote (Go)"
-    "${REPO_ROOT}/scripts/install-cmuxd-remote.sh"
+    if command -v go >/dev/null 2>&1; then
+        echo "==> building cmuxd-remote (Go)"
+        "${REPO_ROOT}/scripts/install-cmuxd-remote.sh"
+    else
+        echo "==> skipping cmuxd-remote (Go not installed; remote-SSH mode unavailable)"
+    fi
 fi
 CMUXD_REMOTE_BIN="$(find "${HOME}/.local/share/cmux/bin" -name 'cmuxd-remote-*' -print -quit 2>/dev/null || true)"
 
