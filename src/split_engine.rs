@@ -1035,6 +1035,16 @@ impl SplitEngine {
         find_gl_area_in_tree(&self.root, pane_id)
     }
 
+    /// Current on-screen size (logical px) of a pane's terminal widget, if it
+    /// is realized and allocated. Used to reject splits that would produce a
+    /// pane too small for its shell/TUI to render.
+    pub fn pane_size(&self, pane_id: u64) -> Option<(i32, i32)> {
+        use gtk4::prelude::*;
+        let area = self.find_gl_area(pane_id)?;
+        let (w, h) = (area.width(), area.height());
+        if w > 0 && h > 0 { Some((w, h)) } else { None }
+    }
+
     /// Returns all leaf panes in this engine as (uuid, pane_id, active) tuples.
     pub fn all_panes(&self) -> Vec<(Uuid, u64, bool)> {
         let mut panes = Vec::new();

@@ -670,6 +670,14 @@ pub fn handle_socket_command(
             } else {
                 gtk4::Orientation::Horizontal
             };
+            // Minimum on-screen size (logical px) a pane may have AFTER a
+            // split. A horizontal split halves width, a vertical split halves
+            // height; going below this yields a pane too narrow/short for
+            // shells and TUI agents to render (some crash outright). ~200px is
+            // roughly 24 columns at a default font — comfortably above the
+            // widths that break real agent TUIs.
+            const MIN_PANE_PX: i32 = 200;
+
             let result = {
                 let mut s = state.borrow_mut();
                 let idx = s.active_index;
@@ -685,6 +693,31 @@ pub fn handle_socket_command(
                                 ));
                                 return;
                             }
+                        }
+                    }
+                    // Reject splits that would produce an unusably small pane.
+                    if let Some((w, h)) = engine.pane_size(engine.active_pane_id) {
+                        let resulting = if orientation == gtk4::Orientation::Horizontal {
+                            w / 2
+                        } else {
+                            h / 2
+                        };
+                        if resulting < MIN_PANE_PX {
+                            let axis = if orientation == gtk4::Orientation::Horizontal {
+                                "wide"
+                            } else {
+                                "tall"
+                            };
+                            drop(s);
+                            let _ = resp_tx.send(err(
+                                req_id,
+                                "pane_too_small",
+                                &format!(
+                                    "pane not {} enough to split (would leave {}px, need {}px); resize the window or close other panes",
+                                    axis, resulting, MIN_PANE_PX
+                                ),
+                            ));
+                            return;
                         }
                     }
                     engine.split_active(orientation)
