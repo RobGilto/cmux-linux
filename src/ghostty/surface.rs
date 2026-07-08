@@ -707,19 +707,20 @@ pub(crate) unsafe extern "C" fn read_clipboard_cb(
     _userdata: *mut std::ffi::c_void,
     clipboard_type: crate::ghostty::ffi::ghostty_clipboard_e,
     request: *mut std::ffi::c_void,
-) {
+) -> bool {
     use gtk4::prelude::*;
     use std::sync::atomic::Ordering;
 
     let surface_ptr = crate::ghostty::callbacks::SURFACE_PTR.load(Ordering::SeqCst);
     if surface_ptr == 0 {
-        return;
+        // No live surface to paste into — report "not started" so ghostty
+        // frees the request state itself instead of waiting on us.
+        return false;
     }
-    let surface = surface_ptr as ffi::ghostty_surface_t;
 
     let display = match gtk4::gdk::Display::default() {
         Some(d) => d,
-        None => return,
+        None => return false,
     };
     let clipboard = if clipboard_type == ffi::ghostty_clipboard_e_GHOSTTY_CLIPBOARD_SELECTION {
         display.primary_clipboard()
@@ -727,40 +728,78 @@ pub(crate) unsafe extern "C" fn read_clipboard_cb(
         display.clipboard()
     };
 
-    // Read clipboard text synchronously using GLib event loop.
-    // gtk4::glib::MainContext::block_on runs the async future on the current (main) thread.
-    // This is safe here because read_clipboard_cb is called from the GLib main thread.
-    let text_result = glib::MainContext::default().block_on(clipboard.read_text_future());
+    // Ghostty's clipboard-read protocol is ASYNCHRONOUS by contract: return
+    // `true` now to mark the request started (ghostty then keeps `request`
+    // alive and must NOT free it), and call complete_clipboard_request later
+    // from the read callback. The previous implementation used
+    // `MainContext::block_on` to read synchronously and completed the request
+    // inline — that re-enters the core surface from *within*
+    // startClipboardRequest and frees the request state mid-call, while
+    // ghostty (told nothing was "started" via the old void return) also frees
+    // it → `free(): double free detected` on any paste.
+    let request_addr = request as usize;
+    clipboard.read_text_async(gtk4::gio::Cancellable::NONE, move |result| {
+        let c_text = match result {
+            Ok(Some(ref s)) => std::ffi::CString::new(s.as_str()).ok(),
+            _ => None,
+        };
+        // ghostty's `str` param is a non-null [*:0]const u8, so fall back to an
+        // empty string rather than passing null (which it would deref).
+        let empty = std::ffi::CString::default();
+        let text_ptr = c_text.as_ref().unwrap_or(&empty).as_ptr();
 
-    let c_text = match text_result {
-        Ok(Some(ref s)) => std::ffi::CString::new(s.as_str()).ok(),
-        _ => None,
-    };
-    let text_ptr = c_text
-        .as_ref()
-        .map(|s| s.as_ptr())
-        .unwrap_or(std::ptr::null());
+        // Re-check the surface is still realized — unrealize zeroes SURFACE_PTR.
+        // If it is gone, drop the completion; ghostty tears the request down
+        // with the surface.
+        let surf = crate::ghostty::callbacks::SURFACE_PTR.load(Ordering::SeqCst);
+        if surf == 0 {
+            return;
+        }
+        unsafe {
+            ffi::ghostty_surface_complete_clipboard_request(
+                surf as ffi::ghostty_surface_t,
+                text_ptr,
+                request_addr as *mut std::ffi::c_void,
+                true,
+            );
+        }
+    });
 
-    unsafe {
-        ffi::ghostty_surface_complete_clipboard_request(surface, text_ptr, request, true);
-    }
+    true
 }
 
 pub(crate) unsafe extern "C" fn confirm_read_clipboard_cb(
     _userdata: *mut std::ffi::c_void,
     value: *const std::os::raw::c_char,
-    surface_ptr: *mut std::ffi::c_void,
+    request: *mut std::ffi::c_void,
     _request_type: crate::ghostty::ffi::ghostty_clipboard_request_e,
 ) {
+    use std::sync::atomic::Ordering;
     // Phase 1: auto-confirm all clipboard reads without a dialog (per D-09).
-    // surface_ptr (arg3) is the ghostty_surface_t — passed back to complete_clipboard_request.
-    // _request_type is informational only; we always confirm.
-    // complete_clipboard_request's 3rd arg (*mut c_void) is NULL for non-request-based calls.
+    //
+    // Ghostty's confirm_read_clipboard contract is
+    //   (userdata, str, *ClipboardRequest request, request_type)
+    // — arg3 is the pending *ClipboardRequest, NOT a surface, and ghostty does
+    // not hand us the surface here. It reaches this path when the core flags an
+    // "unsafe paste" (e.g. multi-line / bracketed-paste content) and preserves
+    // `request` for us to complete. We recover the surface from SURFACE_PTR (the
+    // same global read_clipboard_cb uses) and pass `request` straight back with
+    // confirmed=true, which re-runs completeClipboardRequest with the safety
+    // check bypassed and then destroys the request.
+    //
+    // The previous version passed `request` in the *surface* slot and NULL in
+    // the *request* slot, so ghostty dereferenced a ClipboardRequest as a
+    // Surface and called destroy(null) → heap corruption / double free on any
+    // multi-line paste.
+    let surface_ptr = crate::ghostty::callbacks::SURFACE_PTR.load(Ordering::SeqCst);
+    if surface_ptr == 0 || value.is_null() {
+        return;
+    }
     unsafe {
         crate::ghostty::ffi::ghostty_surface_complete_clipboard_request(
             surface_ptr as crate::ghostty::ffi::ghostty_surface_t,
             value,
-            std::ptr::null_mut(), // no pending request object in confirm path
+            request,
             true,
         );
     }
