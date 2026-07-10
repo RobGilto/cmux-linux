@@ -56,6 +56,26 @@ pub enum Commands {
     },
     /// Ping the running cmux instance
     Ping,
+    /// Block until a named rendezvous point is signalled (or signal it).
+    /// Orchestrator: `cmux wait-for X --timeout 600`. Worker: `cmux wait-for -S X`.
+    /// A signal with no waiters is latched for the next waiter.
+    #[command(name = "wait-for")]
+    WaitFor {
+        /// Rendezvous point name
+        name: String,
+        /// Signal instead of wait
+        #[arg(short = 'S', long)]
+        signal: bool,
+        /// Wait timeout in seconds
+        #[arg(long, default_value_t = 300)]
+        timeout: u64,
+    },
+    /// Per-surface process stats (pid, cumulative CPU, memory), busiest first
+    Top {
+        /// Output format: table, tsv, json
+        #[arg(long, default_value = "table")]
+        format: String,
+    },
     /// Show cmux instance identity (version, platform, pid)
     Identify,
     /// List supported socket commands
@@ -125,6 +145,17 @@ pub enum Commands {
     },
 
     // -- Surface commands --
+    /// Assign a workspace to a sidebar group (empty string clears)
+    SetGroup {
+        /// Group name ("" to remove the workspace from its group)
+        group: String,
+        /// Workspace UUID (default: active workspace)
+        #[arg(long)]
+        workspace: Option<String>,
+    },
+    /// List workspace groups and their members
+    ListGroups,
+
     /// List all surfaces
     ListSurfaces,
     /// Split a surface
@@ -135,6 +166,10 @@ pub enum Commands {
         /// Target surface ID (default: focused)
         #[arg(long)]
         id: Option<String>,
+        /// Boot a provider-aware agent session in the new pane
+        /// (claude | codex | gemini | pi)
+        #[arg(long)]
+        agent: Option<String>,
     },
     /// Focus a surface by ID
     FocusSurface {
@@ -524,10 +559,13 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         })?
     };
 
-    // Use longer timeout for browser wait commands
+    // Use longer timeouts for commands that legitimately block server-side.
     let timeout = match &cli.command {
         Commands::Browser(BrowserCommand::Wait { timeout_ms, .. }) => {
             Duration::from_millis(timeout_ms + 5000)
+        }
+        Commands::WaitFor { signal: false, timeout, .. } => {
+            Duration::from_secs(timeout + 5)
         }
         _ => Duration::from_secs(5),
     };
@@ -589,6 +627,37 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
             // A broken pipe (e.g. `| head -1`) ends the stream cleanly.
             writeln!(stdout, "{}", line).is_ok() && stdout.flush().is_ok()
         })?;
+        return Ok(());
+    }
+
+    // Top: sorted, formatted client-side (table/tsv/json).
+    if let Commands::Top { ref format } = cli.command {
+        let result = client.call("surface.top", serde_json::json!({}))?;
+        let mut rows: Vec<serde_json::Value> = result
+            .get("top")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        rows.sort_by(|a, b| {
+            let cpu = |r: &serde_json::Value| r.get("cpu_secs").and_then(|v| v.as_f64()).unwrap_or(-1.0);
+            cpu(b).partial_cmp(&cpu(a)).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        match format.as_str() {
+            "json" => println!("{}", serde_json::json!({"top": rows})),
+            fmt => {
+                let sep = if fmt == "tsv" { "\t" } else { "  " };
+                println!("SURFACE{sep}WORKSPACE{sep}PID{sep}CPU_SECS{sep}RSS_MB{sep}CMDLINE");
+                for r in &rows {
+                    let g = |k: &str| r.get(k).map(|v| v.to_string().trim_matches('"').to_string()).unwrap_or_default();
+                    let rss_mb = r.get("rss_bytes").and_then(|v| v.as_u64()).unwrap_or(0) / (1024 * 1024);
+                    println!(
+                        "{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}",
+                        &g("surface")[..8.min(g("surface").len())],
+                        g("workspace"), g("pid"), g("cpu_secs"), rss_mb, g("cmdline"),
+                    );
+                }
+            }
+        }
         return Ok(());
     }
 
@@ -870,6 +939,13 @@ fn command_to_rpc(cmd: &Commands) -> (&'static str, serde_json::Value) {
         // Launch never reaches RPC mapping — run() intercepts it first.
         Commands::Launch { .. } => unreachable!("launch handled in run()"),
         Commands::Ping => ("system.ping", json!({})),
+        Commands::WaitFor { name, signal: true, .. } => {
+            ("rendezvous.signal", json!({"name": name}))
+        }
+        Commands::WaitFor { name, signal: false, timeout } => {
+            ("rendezvous.wait", json!({"name": name, "timeout_ms": timeout * 1000}))
+        }
+        Commands::Top { .. } => ("surface.top", json!({})),
         Commands::Identify => ("system.identify", json!({})),
         Commands::Capabilities => ("system.capabilities", json!({})),
         Commands::ListWorkspaces => ("workspace.list", json!({})),
@@ -924,12 +1000,24 @@ fn command_to_rpc(cmd: &Commands) -> (&'static str, serde_json::Value) {
             ("workspace.reorder", json!({"id": id, "position": position}))
         }
 
+        Commands::SetGroup { group, workspace } => {
+            let mut p = serde_json::Map::new();
+            p.insert("group".into(), json!(group));
+            if let Some(ref ws) = workspace {
+                p.insert("workspace".into(), json!(ws));
+            }
+            ("workspace.set_group", Value::Object(p))
+        }
+        Commands::ListGroups => ("workspace_group.list", json!({})),
         Commands::ListSurfaces => ("surface.list", json!({})),
-        Commands::Split { direction, id } => {
+        Commands::Split { direction, id, agent } => {
             let mut p = serde_json::Map::new();
             p.insert("direction".into(), json!(direction));
             if let Some(ref id) = id {
                 p.insert("id".into(), json!(id));
+            }
+            if let Some(ref agent) = agent {
+                p.insert("agent".into(), json!(agent));
             }
             ("surface.split", Value::Object(p))
         }

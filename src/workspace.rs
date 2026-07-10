@@ -61,6 +61,9 @@ pub struct Workspace {
     pub remote_target: Option<String>,
     /// Connection state for remote workspaces.
     pub connection_state: ConnectionState,
+    /// Sidebar group label (roadmap 3.4). Groups are labels, not entities:
+    /// a group exists iff at least one workspace references it.
+    pub group: Option<String>,
 }
 
 impl Workspace {
@@ -78,6 +81,7 @@ impl Workspace {
             last_notification: None,
             remote_target: None,
             connection_state: ConnectionState::Local,
+            group: None,
         }
     }
 
@@ -100,6 +104,7 @@ impl Workspace {
             last_notification: None,
             remote_target: Some(target),
             connection_state: ConnectionState::Reconnecting(0),
+            group: None,
         }
     }
 }

@@ -3,6 +3,7 @@ pub mod commands;
 pub mod error;
 pub mod events;
 pub mod handlers;
+pub mod rendezvous;
 
 /// How long the socket side waits for the GTK main thread to answer one
 /// request before replying `timeout`. A wedged main thread must not hang
@@ -258,6 +259,35 @@ async fn dispatch_line(
     let method = req.get("method").and_then(|m| m.as_str()).unwrap_or("").to_string();
     let params = req.get("params").cloned().unwrap_or(serde_json::Value::Object(Default::default()));
 
+    // Rendezvous verbs run entirely on the tokio side (no GTK round-trip):
+    // wait may block for minutes and must not consume the main-thread bridge.
+    if method == "rendezvous.signal" {
+        let Some(name) = params.get("name").and_then(|v| v.as_str()) else {
+            return error::error_reply(req_id, error::ErrorCode::InvalidParams, "missing \"name\"")
+                .to_string();
+        };
+        rendezvous::signal(name);
+        return serde_json::json!({"id": req_id, "ok": true, "result": {"signalled": name}})
+            .to_string();
+    }
+    if method == "rendezvous.wait" {
+        let Some(name) = params.get("name").and_then(|v| v.as_str()) else {
+            return error::error_reply(req_id, error::ErrorCode::InvalidParams, "missing \"name\"")
+                .to_string();
+        };
+        let timeout_ms = params.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(300_000);
+        return match rendezvous::wait(name, std::time::Duration::from_millis(timeout_ms)).await {
+            Ok(()) => serde_json::json!({"id": req_id, "ok": true, "result": {"released": name}})
+                .to_string(),
+            Err(()) => error::error_reply(
+                req_id,
+                error::ErrorCode::Timeout,
+                &format!("wait-for {name} timed out after {timeout_ms}ms"),
+            )
+            .to_string(),
+        };
+    }
+
     let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
 
     let cmd = match method.as_str() {
@@ -306,6 +336,7 @@ async fn dispatch_line(
             req_id: req_id.clone(),
             id: params.get("id").and_then(|v| v.as_str()).map(String::from),
             direction: params.get("direction").and_then(|v| v.as_str()).unwrap_or("horizontal").to_string(),
+            agent: params.get("agent").and_then(|v| v.as_str()).map(String::from),
             resp_tx,
         },
         "surface.focus" => commands::SocketCommand::SurfaceFocus {
@@ -337,6 +368,10 @@ async fn dispatch_line(
                 .get("scrollback")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false),
+            resp_tx,
+        },
+        "surface.top" => commands::SocketCommand::SurfaceTop {
+            req_id: req_id.clone(),
             resp_tx,
         },
         "surface.health" => commands::SocketCommand::SurfaceHealth {
@@ -390,6 +425,16 @@ async fn dispatch_line(
             surface: params.get("surface").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             provider: params.get("provider").and_then(|v| v.as_str()).map(String::from),
             session_id: params.get("session_id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            resp_tx,
+        },
+        "workspace.set_group" => commands::SocketCommand::WorkspaceSetGroup {
+            req_id: req_id.clone(),
+            workspace: params.get("workspace").and_then(|v| v.as_str()).map(String::from),
+            group: params.get("group").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            resp_tx,
+        },
+        "workspace_group.list" => commands::SocketCommand::WorkspaceGroupList {
+            req_id: req_id.clone(),
             resp_tx,
         },
         "workspace.set_status" => commands::SocketCommand::WorkspaceSetStatus {

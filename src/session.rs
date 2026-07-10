@@ -10,6 +10,9 @@ pub struct WorkspaceSession {
     pub active_pane_uuid: Option<String>,
     /// The full pane layout tree for this workspace.
     pub layout: SplitNodeData,
+    /// Sidebar group label (defaulted for pre-group session files).
+    #[serde(default)]
+    pub group: Option<String>,
 }
 
 /// Root session data written to session.json.
@@ -142,6 +145,7 @@ mod tests {
             version: 1,
             active_index: 0,
             workspaces: vec![WorkspaceSession {
+                group: None,
                 uuid: "test-uuid-1".to_string(),
                 name: name.to_string(),
                 active_pane_uuid: None,

@@ -10,6 +10,9 @@ pub type AppStateRef = Rc<RefCell<AppState>>;
 pub struct AppState {
     pub split_engines: Vec<SplitEngine>,
     pub gtk_app: gtk4::Application,
+    /// Last title each surface reported via GHOSTTY_ACTION_SET_TITLE, keyed
+    /// by pane_id. Fed by the main-loop tick; read by surface.list.
+    pub surface_titles: std::collections::HashMap<u64, String>,
     /// All open workspaces. Never empty after initialization — create_workspace is called in new().
     pub workspaces: Vec<Workspace>,
     /// Index into workspaces of the currently visible workspace.
@@ -63,6 +66,7 @@ impl AppState {
         let state = AppState {
             workspaces: Vec::new(),
             split_engines: Vec::new(),
+            surface_titles: std::collections::HashMap::new(),
             active_index: 0,
             stack,
             sidebar_list,
@@ -156,6 +160,13 @@ impl AppState {
 
         let mut workspace = Workspace::new(id, display_number);
         workspace.name = ws.name.clone();
+        workspace.group = ws.group.clone();
+        // Reuse the persisted uuid so socket refs stay stable across
+        // restarts (previously every restore minted fresh uuids and broke
+        // any orchestrator holding the old ones).
+        if let Ok(saved) = uuid::Uuid::parse_str(&ws.uuid) {
+            workspace.uuid = saved;
+        }
 
         // Phase 9: Use shared row builder for consistent layout including close button
         let hbox = crate::sidebar::rebuild_sidebar_row_content(&workspace.name);
@@ -563,6 +574,7 @@ impl AppState {
                             name: ws.name.clone(),
                             active_pane_uuid,
                             layout,
+                            group: ws.group.clone(),
                         }
                     }).collect(),
                 };

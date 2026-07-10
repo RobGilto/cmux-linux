@@ -39,6 +39,12 @@ pub static BELL_PANE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::Atomi
 /// Phase 4: Flag indicating a bell is pending processing.
 pub static BELL_PENDING: AtomicBool = AtomicBool::new(false);
 
+/// Surface titles reported via GHOSTTY_ACTION_SET_TITLE, pending main-loop
+/// processing ((pane_id, title) pairs). Processed by the 100ms tick in
+/// main.rs for EVERY workspace — focused or not — closing the P0 where
+/// title updates were silently dropped (roadmap Phase 3.1).
+pub static TITLE_PENDING: Mutex<Vec<(u64, String)>> = Mutex::new(Vec::new());
+
 /// Called by Ghostty from its renderer thread. Must not call any ghostty_* API inline.
 /// Instead, schedules ghostty_app_tick() on the GLib main loop (per D-04, GHOST-07).
 /// Wakeup count for diagnostic logging (only logs occasionally to avoid spam)
@@ -121,6 +127,30 @@ pub unsafe extern "C" fn action_cb(
             if let Some(pane_id) = pane_id {
                 BELL_PANE_ID.store(pane_id, std::sync::atomic::Ordering::SeqCst);
                 BELL_PENDING.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        return true;
+    }
+
+    // Surface title changes (shell prompts, agents, ssh) — queue for the
+    // main-loop tick. Applies to background workspaces too.
+    if action.tag == ffi::ghostty_action_tag_e_GHOSTTY_ACTION_SET_TITLE {
+        if _target.tag == ffi::ghostty_target_tag_e_GHOSTTY_TARGET_SURFACE {
+            let surface_ptr = unsafe { _target.target.surface } as usize;
+            let pane_id = SURFACE_REGISTRY
+                .lock()
+                .ok()
+                .and_then(|reg| reg.get(&surface_ptr).copied());
+            if let Some(pane_id) = pane_id {
+                let title_ptr = unsafe { action.action.set_title.title };
+                if !title_ptr.is_null() {
+                    let title = unsafe { std::ffi::CStr::from_ptr(title_ptr) }
+                        .to_string_lossy()
+                        .into_owned();
+                    if let Ok(mut queue) = TITLE_PENDING.lock() {
+                        queue.push((pane_id, title));
+                    }
+                }
             }
         }
         return true;

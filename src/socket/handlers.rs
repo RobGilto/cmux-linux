@@ -305,7 +305,9 @@ pub fn handle_socket_command(
                 "workspace.next", "workspace.previous", "workspace.last", "workspace.reorder",
                 "surface.list", "surface.split", "surface.focus", "surface.close",
                 "surface.send_text", "surface.send_key", "surface.read_text",
-                "surface.health", "surface.refresh",
+                "surface.health", "surface.refresh", "surface.top",
+                "rendezvous.wait", "rendezvous.signal",
+                "workspace.set_group", "workspace_group.list",
                 "pane.list", "pane.focus", "pane.last",
                 "window.list", "window.current",
                 "notification.list", "notification.clear", "notification.create",
@@ -367,6 +369,7 @@ pub fn handle_socket_command(
                     "title": ws.name,
                     "selected": i == s.active_index,
                     "pane_count": pane_count,
+                    "group": ws.group,
                 })
             }).collect();
             let _ = resp_tx.send(ok(req_id, json!({"workspaces": list})));
@@ -433,6 +436,7 @@ pub fn handle_socket_command(
                     name: name.clone().unwrap_or_else(|| "Workspace".to_string()),
                     active_pane_uuid: None,
                     layout: data,
+                    group: None,
                 };
                 let created = state.borrow_mut().restore_workspace(&ws_session);
                 match created {
@@ -654,18 +658,71 @@ pub fn handle_socket_command(
             let s = state.borrow();
             let mut panes: Vec<Value> = Vec::new();
             for (ws_idx, (ws, engine)) in s.workspaces.iter().zip(s.split_engines.iter()).enumerate() {
-                for (pane_uuid, _pane_id, active) in engine.all_panes() {
+                for (pane_uuid, pane_id, active) in engine.all_panes() {
                     panes.push(json!({
                         "uuid": pane_uuid.to_string(),
                         "workspace_uuid": ws.uuid.to_string(),
                         "active": active && ws_idx == s.active_index,
+                        // Last SET_TITLE the surface reported (null = none yet)
+                        "title": s.surface_titles.get(&pane_id),
                     }));
                 }
             }
             let _ = resp_tx.send(ok(req_id, json!({"surfaces": panes})));
         }
 
-        SocketCommand::SurfaceSplit { req_id, id, direction, resp_tx } => {
+        SocketCommand::SurfaceTop { req_id, resp_tx } => {
+            // Per-surface process stats. Shell PIDs aren't exposed by
+            // ghostty, so surfaces map to cmux-app's child processes via
+            // CMUX_PANE env (exact, agent panes) or creation order (pts
+            // numbers allocate sequentially — heuristic, flagged as such).
+            let s = state.borrow();
+            let mut panes: Vec<(String, String)> = Vec::new();
+            for (ws, engine) in s.workspaces.iter().zip(s.split_engines.iter()) {
+                for (uuid, _pane_id, _active) in engine.all_panes() {
+                    panes.push((uuid.to_string(), ws.name.clone()));
+                }
+            }
+            drop(s);
+            let procs = crate::procstat::child_process_stats();
+            let row = |uuid: &str, ws: &str, p: &crate::procstat::ProcEntry, how: &str| {
+                json!({
+                    "surface": uuid,
+                    "workspace": ws,
+                    "pid": p.pid,
+                    "cpu_secs": (p.cpu_secs * 100.0).round() / 100.0,
+                    "rss_bytes": p.rss_bytes,
+                    "cmdline": p.cmdline,
+                    "matched_by": how,
+                })
+            };
+            let mut used = vec![false; procs.len()];
+            let mut rows: Vec<Value> = Vec::new();
+            let mut unmatched: Vec<(String, String)> = Vec::new();
+            for (uuid, ws_name) in &panes {
+                match procs.iter().position(|p| p.cmux_pane.as_deref() == Some(uuid.as_str())) {
+                    Some(i) => {
+                        used[i] = true;
+                        rows.push(row(uuid, ws_name, &procs[i], "env"));
+                    }
+                    None => unmatched.push((uuid.clone(), ws_name.clone())),
+                }
+            }
+            let free: Vec<usize> = (0..procs.len())
+                .filter(|&i| !used[i] && procs[i].pts >= 0)
+                .collect();
+            for (n, (uuid, ws_name)) in unmatched.iter().enumerate() {
+                match free.get(n) {
+                    Some(&i) => rows.push(row(uuid, ws_name, &procs[i], "order")),
+                    None => rows.push(json!({
+                        "surface": uuid, "workspace": ws_name, "pid": null,
+                    })),
+                }
+            }
+            let _ = resp_tx.send(ok(req_id, json!({"top": rows})));
+        }
+
+        SocketCommand::SurfaceSplit { req_id, id, direction, agent, resp_tx } => {
             // Split a specific surface (by UUID) or the active pane in the
             // active workspace. SplitEngine only knows how to split its
             // active pane, so an explicit target becomes the active pane
@@ -739,7 +796,39 @@ pub fn handle_socket_command(
             };
             match result {
                 Some(uuid_str) => {
-                    let _ = resp_tx.send(ok(req_id, json!({"uuid": uuid_str})));
+                    // `split --agent <provider>`: the new pane boots a
+                    // provider-aware agent session (roadmap 3.5). The
+                    // startup command is typed in after the GLArea has had
+                    // time to realize and spawn its shell.
+                    if let Some(provider) =
+                        agent.as_deref().and_then(crate::agent::Provider::from_str)
+                    {
+                        crate::agent::register(&uuid_str, provider, None, None);
+                        let session = crate::agent::AgentSession {
+                            provider,
+                            session_id: None,
+                            cwd: None,
+                        };
+                        let boot = crate::agent::startup_command(&uuid_str, &session);
+                        let state2 = state.clone();
+                        let uuid2 = uuid_str.clone();
+                        gtk4::glib::timeout_add_local_once(
+                            std::time::Duration::from_millis(700),
+                            move || {
+                                let s = state2.borrow();
+                                if let Some(surf) = resolve_surface_ptr(&s, Some(&uuid2)) {
+                                    unsafe {
+                                        surface_type_bytes(surf, format!("{boot}\n").as_bytes());
+                                    }
+                                } else {
+                                    tracing::warn!(
+                                        "split --agent: surface {uuid2} not realized; agent not booted"
+                                    );
+                                }
+                            },
+                        );
+                    }
+                    let _ = resp_tx.send(ok(req_id, json!({"uuid": uuid_str, "agent": agent})));
                 }
                 None => {
                     let _ = resp_tx.send(err(req_id, "split_failed", "could not split pane"));
@@ -950,11 +1039,13 @@ pub fn handle_socket_command(
             let s = state.borrow();
             let mut panes: Vec<Value> = Vec::new();
             for (ws_idx, (ws, engine)) in s.workspaces.iter().zip(s.split_engines.iter()).enumerate() {
-                for (pane_uuid, _pane_id, active) in engine.all_panes() {
+                for (pane_uuid, pane_id, active) in engine.all_panes() {
                     panes.push(json!({
                         "uuid": pane_uuid.to_string(),
                         "workspace_uuid": ws.uuid.to_string(),
                         "active": active && ws_idx == s.active_index,
+                        // Last SET_TITLE the surface reported (null = none yet)
+                        "title": s.surface_titles.get(&pane_id),
                     }));
                 }
             }
@@ -1059,7 +1150,7 @@ pub fn handle_socket_command(
                                 "surface_uuid": uuid,
                                 "provider": a.provider.as_str(),
                                 "session_id": a.session_id,
-                                "resumable": a.session_id.is_some(),
+                                "resumable": a.session_id.is_some() && a.provider.resumable(),
                                 "workspace_name": ws,
                             })
                         })
@@ -1102,6 +1193,52 @@ pub fn handle_socket_command(
                     }
                 }
             }
+        }
+
+        SocketCommand::WorkspaceSetGroup { req_id, workspace, group, resp_tx } => {
+            // Groups are labels, not entities: assigning a new label creates
+            // the group; clearing the last member removes it (roadmap 3.4).
+            let mut s = state.borrow_mut();
+            let idx = match workspace {
+                Some(ref uuid) => s.workspaces.iter().position(|ws| ws.uuid.to_string() == *uuid),
+                None => Some(s.active_index),
+            };
+            match idx {
+                Some(i) => {
+                    let value = if group.trim().is_empty() { None } else { Some(group.clone()) };
+                    s.workspaces[i].group = value.clone();
+                    let ws_uuid = s.workspaces[i].uuid.to_string();
+                    s.trigger_session_save();
+                    drop(s);
+                    crate::socket::events::emit(
+                        "workspace.group",
+                        json!({"workspace_uuid": ws_uuid, "group": value}),
+                    );
+                    let _ = resp_tx.send(ok(req_id, json!({"group": value})));
+                }
+                None => {
+                    let _ = resp_tx.send(err(req_id, "not_found", "workspace not found"));
+                }
+            }
+        }
+
+        SocketCommand::WorkspaceGroupList { req_id, resp_tx } => {
+            let s = state.borrow();
+            let mut groups: std::collections::BTreeMap<String, Vec<Value>> =
+                std::collections::BTreeMap::new();
+            for ws in &s.workspaces {
+                if let Some(ref g) = ws.group {
+                    groups.entry(g.clone()).or_default().push(json!({
+                        "uuid": ws.uuid.to_string(),
+                        "title": ws.name,
+                    }));
+                }
+            }
+            let out: Vec<Value> = groups
+                .into_iter()
+                .map(|(name, members)| json!({"name": name, "workspaces": members}))
+                .collect();
+            let _ = resp_tx.send(ok(req_id, json!({"groups": out})));
         }
 
         SocketCommand::WorkspaceSetStatus { req_id, workspace, state: status, color, resp_tx } => {

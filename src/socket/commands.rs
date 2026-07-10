@@ -34,7 +34,7 @@ pub enum SocketCommand {
 
     // -- surface.* (implemented in Plan 04) --
     SurfaceList      { req_id: Value, resp_tx: RespTx },
-    SurfaceSplit     { req_id: Value, id: Option<String>, direction: String, resp_tx: RespTx },
+    SurfaceSplit     { req_id: Value, id: Option<String>, direction: String, agent: Option<String>, resp_tx: RespTx },
     SurfaceFocus     { req_id: Value, id: String, resp_tx: RespTx },
     SurfaceClose     { req_id: Value, id: String, resp_tx: RespTx },
     SurfaceSendText  { req_id: Value, id: Option<String>, text: String, resp_tx: RespTx },
@@ -42,6 +42,8 @@ pub enum SocketCommand {
     SurfaceReadText  { req_id: Value, id: Option<String>, scrollback: bool, resp_tx: RespTx },
     SurfaceHealth    { req_id: Value, id: Option<String>, resp_tx: RespTx },
     SurfaceRefresh   { req_id: Value, id: Option<String>, resp_tx: RespTx },
+    /// Per-surface process stats (pid/cpu/mem) for `cmux top`.
+    SurfaceTop       { req_id: Value, resp_tx: RespTx },
 
     // -- pane.* (implemented in Plan 04) --
     PaneList         { req_id: Value, resp_tx: RespTx },
@@ -75,6 +77,15 @@ pub enum SocketCommand {
         color: Option<String>,
         resp_tx: RespTx,
     },
+    /// Assign a workspace to a sidebar group (empty group clears).
+    WorkspaceSetGroup {
+        req_id: Value,
+        workspace: Option<String>,
+        group: String,
+        resp_tx: RespTx,
+    },
+    /// List groups with their member workspaces.
+    WorkspaceGroupList { req_id: Value, resp_tx: RespTx },
     WorkspaceSetProgress {
         req_id: Value,
         workspace: Option<String>,

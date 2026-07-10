@@ -12,6 +12,7 @@ use std::ffi::CString;
 mod ghostty;
 mod logging;
 mod platform;
+mod procstat;
 mod workspace;
 mod split_engine;
 mod app_state;
@@ -425,19 +426,36 @@ fn build_ui(
             let active = session.active_index.min(ws_count.saturating_sub(1));
             state.borrow_mut().switch_to_index(active);
 
-            // D-10: After GLAreas realize, sync surface pointers from registry.
+            // Roadmap 3.1 (P0): GTK only realizes the visible stack page, so
+            // surfaces in background restored workspaces never spawn their
+            // shells — read-text comes back empty and the pane is undrivable
+            // until the user clicks through every workspace. Sweep each page
+            // once (one per 60ms tick, giving GTK a frame to realize),
+            // finish on the restored active workspace, and only THEN sync
+            // surface pointers and schedule agent resumes.
             if session.version >= 2 {
-                let state_for_sync = state.clone();
-                gtk4::glib::idle_add_local_once(move || {
+                let state_sweep = state.clone();
+                let idx = std::cell::Cell::new(0usize);
+                glib::timeout_add_local(std::time::Duration::from_millis(60), move || {
+                    let i = idx.get();
+                    if i < ws_count {
+                        state_sweep.borrow_mut().switch_to_index(i);
+                        idx.set(i + 1);
+                        return glib::ControlFlow::Continue;
+                    }
+                    state_sweep.borrow_mut().switch_to_index(active);
                     {
-                        let mut s = state_for_sync.borrow_mut();
+                        let mut s = state_sweep.borrow_mut();
                         for engine in &mut s.split_engines {
                             engine.sync_surfaces_from_registry();
                         }
-                        tracing::debug!("cmux: synced surface pointers from registry after restore");
+                        tracing::debug!(
+                            "cmux: realize sweep done ({ws_count} workspaces), surface pointers synced"
+                        );
                     }
                     // Resume any restored agent surfaces (prompt 10 auto-resume).
-                    crate::socket::handlers::schedule_agent_resumes(state_for_sync.clone());
+                    crate::socket::handlers::schedule_agent_resumes(state_sweep.clone());
+                    glib::ControlFlow::Break
                 });
             }
         } else {
@@ -500,6 +518,42 @@ fn build_ui(
                             .unwrap_or_else(|| serde_json::json!({"pane_id": pane_id}))
                     };
                     crate::socket::events::emit("surface.bell", payload);
+                }
+            }
+            // Process surface title updates — for ALL workspaces, focused or
+            // not (roadmap Phase 3.1). Stores the title for surface.list and
+            // emits surface.title so orchestrators can react without polling.
+            {
+                let pending: Vec<(u64, String)> = crate::ghostty::callbacks::TITLE_PENDING
+                    .lock()
+                    .map(|mut q| q.drain(..).collect())
+                    .unwrap_or_default();
+                for (pane_id, title) in pending {
+                    let payload = {
+                        let mut s = state.borrow_mut();
+                        let changed = s.surface_titles.get(&pane_id) != Some(&title);
+                        s.surface_titles.insert(pane_id, title.clone());
+                        if !changed {
+                            continue;
+                        }
+                        s.split_engines
+                            .iter()
+                            .enumerate()
+                            .find_map(|(i, e)| {
+                                e.root.find_uuid_for_pane(pane_id).map(|uuid| {
+                                    serde_json::json!({
+                                        "surface_uuid": uuid.to_string(),
+                                        "workspace_uuid": s.workspaces[i].uuid.to_string(),
+                                        "workspace_name": s.workspaces[i].name,
+                                        "title": title,
+                                    })
+                                })
+                            })
+                            .unwrap_or_else(|| serde_json::json!({
+                                "pane_id": pane_id, "title": title,
+                            }))
+                    };
+                    crate::socket::events::emit("surface.title", payload);
                 }
             }
             // Process SSH events

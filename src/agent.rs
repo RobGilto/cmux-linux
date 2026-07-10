@@ -16,15 +16,29 @@ use std::sync::{LazyLock, Mutex};
 
 /// Provider-specific knowledge: how to launch fresh, how to resume, and how
 /// its session-capture hook is wired.
+///
+/// Capture strategies (roadmap 3.5):
+/// - Claude: SessionStart hook → `cmux agent report-session` (exact resume).
+/// - pi: no id capture; resume falls back to `pi -c` (continue most recent
+///   session in the launch cwd) — best effort.
+/// - Codex: session ids are printed but not hook-capturable yet; resume uses
+///   `codex resume <id>` when an id was reported, else fresh.
+/// - Gemini: no session persistence CLI surface today; always fresh.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Provider {
     Claude,
+    Codex,
+    Gemini,
+    Pi,
 }
 
 impl Provider {
     pub fn from_str(s: &str) -> Option<Provider> {
         match s.to_ascii_lowercase().as_str() {
             "claude" | "claude-code" => Some(Provider::Claude),
+            "codex" => Some(Provider::Codex),
+            "gemini" => Some(Provider::Gemini),
+            "pi" => Some(Provider::Pi),
             _ => None,
         }
     }
@@ -32,17 +46,34 @@ impl Provider {
     pub fn as_str(self) -> &'static str {
         match self {
             Provider::Claude => "claude",
+            Provider::Codex => "codex",
+            Provider::Gemini => "gemini",
+            Provider::Pi => "pi",
         }
+    }
+
+    /// All known providers, for agent-sessions listings and doctor checks.
+    pub const ALL: [Provider; 4] =
+        [Provider::Claude, Provider::Codex, Provider::Gemini, Provider::Pi];
+
+    /// Whether a captured/implicit session can be resumed after restart.
+    pub fn resumable(self) -> bool {
+        !matches!(self, Provider::Gemini)
     }
 
     /// The command that boots this agent. When `resume` is set, boot straight
     /// into that session; otherwise start fresh.
     pub fn launch_command(self, resume: Option<&str>) -> String {
-        match self {
-            Provider::Claude => match resume {
-                Some(id) => format!("claude --resume {}", id),
-                None => "claude".to_string(),
-            },
+        match (self, resume) {
+            (Provider::Claude, Some(id)) => format!("claude --resume {}", id),
+            (Provider::Claude, None) => "claude".to_string(),
+            (Provider::Codex, Some(id)) => format!("codex resume {}", id),
+            (Provider::Codex, None) => "codex".to_string(),
+            // Gemini has no resume flag — always fresh.
+            (Provider::Gemini, _) => "gemini".to_string(),
+            // pi continues the most recent session in this cwd (no id arg).
+            (Provider::Pi, Some(_)) => "pi -c".to_string(),
+            (Provider::Pi, None) => "pi".to_string(),
         }
     }
 }
