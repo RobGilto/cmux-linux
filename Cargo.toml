@@ -29,6 +29,9 @@ futures-util = "0.3"
 clap = { version = "4", features = ["derive", "color", "env"] }
 clap_complete = "4.6"
 clap_mangen = "0.3"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tracing-appender = "0.2.5"
 
 [[bin]]
 name = "cmux-generate"

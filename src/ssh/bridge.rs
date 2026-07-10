@@ -57,13 +57,13 @@ impl SshBridge {
     /// Take the write receiver for use in the proxy routing loop.
     /// On reconnect, creates a fresh channel pair and swaps the sender.
     pub fn take_or_recreate_write_rx(&self) -> mpsc::UnboundedReceiver<WriteRequest> {
-        let mut rx_guard = self.write_rx.lock().unwrap();
+        let mut rx_guard = self.write_rx.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(rx) = rx_guard.take() {
             return rx;
         }
         // Reconnect case: old rx was consumed. Create fresh channel.
         let (new_tx, new_rx) = mpsc::unbounded_channel();
-        *self.write_tx.lock().unwrap() = new_tx;
+        *self.write_tx.lock().unwrap_or_else(|p| p.into_inner()) = new_tx;
         new_rx
     }
 
@@ -82,7 +82,7 @@ impl SshBridge {
 
     /// Clone the current write sender (for IoWriteContext creation).
     pub fn clone_write_tx(&self) -> mpsc::UnboundedSender<WriteRequest> {
-        self.write_tx.lock().unwrap().clone()
+        self.write_tx.lock().unwrap_or_else(|p| p.into_inner()).clone()
     }
 
     /// Register a new pane with its stream_id after proxy.open succeeds.
@@ -181,7 +181,7 @@ pub unsafe extern "C" fn ssh_io_write_cb(
 
     let bytes = std::slice::from_raw_parts(data as *const u8, len);
     let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
-    if let Some(ref stream_id) = *ctx.stream_id.lock().unwrap() {
+    if let Some(ref stream_id) = *ctx.stream_id.lock().unwrap_or_else(|p| p.into_inner()) {
         let _ = ctx.write_tx.send(WriteRequest {
             stream_id: stream_id.clone(),
             data_base64: b64,

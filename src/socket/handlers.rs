@@ -243,7 +243,7 @@ fn schedule_startup_commands(
         });
         if pending.is_empty() || tries >= 25 {
             for (uuid, _) in &pending {
-                eprintln!("cmux: layout startup command dropped — surface {} never realized", uuid);
+                tracing::debug!("cmux: layout startup command dropped — surface {} never realized", uuid);
             }
             glib::ControlFlow::Break
         } else {
@@ -291,6 +291,9 @@ pub fn handle_socket_command(
                 // What platform::apply_launch_env auto-configured at startup
                 // (e.g. GDK_DEBUG=gl-prefer-gl on NVIDIA). Empty = nothing.
                 "launch_env": crate::platform::applied_launch_env(),
+                // GL context facts from the first GLArea realize (or its
+                // error) — the first thing to check on a blank window.
+                "gl": crate::ghostty::surface::gl_info(),
             })));
         }
 
@@ -1236,13 +1239,7 @@ pub fn handle_socket_command(
         SocketCommand::BrowserOpen { req_id, url, workspace, resp_tx } => {
             let mut s = state.borrow_mut();
             // Lazy-init BrowserManager per D-05
-            if s.browser_manager.is_none() {
-                let override_path = s.chromium_path_override.clone();
-                s.browser_manager = Some(crate::browser::BrowserManager::with_config_path(
-                    override_path.as_deref(),
-                ));
-            }
-            let bm = s.browser_manager.as_mut().unwrap();
+            let bm = s.browser_manager_mut();
             // Ensure daemon is running (auto-start per D-05)
             if let Err(e) = bm.ensure_daemon() {
                 let _ = resp_tx.send(err(req_id, "daemon_error", &e));
@@ -1282,7 +1279,7 @@ pub fn handle_socket_command(
                     };
                     // Enable streaming so the preview pane shows the page
                     let runtime = s.runtime_handle.clone();
-                    let bm = s.browser_manager.as_mut().unwrap();
+                    let bm = s.browser_manager_mut();
                     let _ = bm.send_command("stream_enable", serde_json::json!({}));
                     if let Some(pic) = picture {
                         if let Some(ref rt) = runtime {
@@ -1299,13 +1296,7 @@ pub fn handle_socket_command(
 
         SocketCommand::BrowserStreamEnable { req_id, resp_tx } => {
             let mut s = state.borrow_mut();
-            if s.browser_manager.is_none() {
-                let override_path = s.chromium_path_override.clone();
-                s.browser_manager = Some(crate::browser::BrowserManager::with_config_path(
-                    override_path.as_deref(),
-                ));
-            }
-            let bm = s.browser_manager.as_mut().unwrap();
+            let bm = s.browser_manager_mut();
             if let Err(e) = bm.ensure_daemon() {
                 let _ = resp_tx.send(err(req_id, "daemon_error", &e));
                 return;
@@ -1331,14 +1322,14 @@ pub fn handle_socket_command(
                     // Wire the WebSocket stream to the Picture widget (Gap 1 fix)
                     if let Some(pic) = picture {
                         let runtime = s.runtime_handle.clone();
-                        let bm = s.browser_manager.as_mut().unwrap();
+                        let bm = s.browser_manager_mut();
                         if let Some(ref rt) = runtime {
                             match bm.start_stream(rt, pic) {
                                 Ok(()) => {
                                     // stream wired to preview pane
                                 }
                                 Err(e) => {
-                                    eprintln!("cmux: stream enable failed: {}", e);
+                                    tracing::warn!("cmux: stream enable failed: {}", e);
                                 }
                             }
                         } else {

@@ -115,7 +115,7 @@ impl AppState {
 
         // Create surface and split engine
         let pane_id = id * 1000;
-        eprintln!(
+        tracing::debug!(
             "cmux: create_workspace calling create_surface for workspace_id={}, pane_id={}",
             id, pane_id
         );
@@ -241,6 +241,9 @@ impl AppState {
             write_tx: bridge.clone_write_tx(),
             stream_id: std::sync::Mutex::new(None),
             eof_received: std::sync::atomic::AtomicBool::new(false),
+            // Invariant: build_ui() sets ssh_event_tx before any signal
+            // handler that can reach this runs — enforced at startup.
+            #[allow(clippy::expect_used)]
             ssh_tx: self.ssh_event_tx.clone().expect("ssh_event_tx must be set before creating remote workspaces"),
         });
         let (gl_area, surface_cell) = crate::ghostty::surface::create_surface(
@@ -498,10 +501,27 @@ impl AppState {
         }
     }
 
+    /// Lazily initialize and return the browser manager. Replaces the
+    /// `is_none() → insert → as_mut().unwrap()` pattern at every call site.
+    pub fn browser_manager_mut(&mut self) -> &mut crate::browser::BrowserManager {
+        if self.browser_manager.is_none() {
+            let override_path = self.chromium_path_override.clone();
+            self.browser_manager = Some(crate::browser::BrowserManager::with_config_path(
+                override_path.as_deref(),
+            ));
+        }
+        // Just written above when None; get_or_insert_with can't be used
+        // because with_config_path borrows self.chromium_path_override.
+        match self.browser_manager.as_mut() {
+            Some(bm) => bm,
+            None => unreachable!("browser_manager set above"),
+        }
+    }
+
     /// Shut down the agent-browser daemon if running (called on app exit).
     pub fn shutdown_browser(&mut self) {
         if let Some(ref mut bm) = self.browser_manager {
-            eprintln!("cmux: shutting down browser daemon");
+            tracing::debug!("cmux: shutting down browser daemon");
             bm.shutdown();
             self.browser_manager = None;
         }
@@ -546,6 +566,10 @@ impl AppState {
                         }
                     }).collect(),
                 };
+                // Tee the snapshot for the panic hook before the debounced
+                // disk write — a crash inside the 500ms window must not
+                // lose the latest topology.
+                crate::session::remember_snapshot(session.clone());
                 let _ = tx.send(session);
             }
             notify.notify_one();
@@ -574,10 +598,10 @@ fn send_bell_notification(_app: &gtk4::Application, workspace_name: &str, _works
             .status();
         match result {
             Ok(status) if !status.success() => {
-                eprintln!("cmux: notify-send exited with {status}");
+                tracing::debug!("cmux: notify-send exited with {status}");
             }
             Err(e) => {
-                eprintln!("cmux: failed to run notify-send: {e}");
+                tracing::warn!("cmux: failed to run notify-send: {e}");
             }
             _ => {}
         }

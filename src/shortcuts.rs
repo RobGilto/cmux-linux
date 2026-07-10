@@ -243,24 +243,18 @@ pub fn handle_browser_open(state: &Rc<RefCell<AppState>>) {
     // the socket path for the worker.
     let socket_path = {
         let mut s = state.borrow_mut();
-        if s.browser_manager.is_none() {
-            let override_path = s.chromium_path_override.clone();
-            s.browser_manager = Some(crate::browser::BrowserManager::with_config_path(
-                override_path.as_deref(),
-            ));
-        }
-        let bm = s.browser_manager.as_mut().unwrap();
+        let bm = s.browser_manager_mut();
         // Re-entry guard. Without this, two rapid clicks on "New Browser"
         // race two bootstrap workers against the same daemon socket: each
         // sends `launch` + `navigate(about:blank)` + `screencast_start`,
         // restarting Chrome under the first pane and clobbering the stream
         // task (start_stream overwrites the JoinHandle without aborting).
         if matches!(bm.preview_state, crate::browser::PreviewState::Loading) {
-            eprintln!("cmux: browser.open ignored — another bootstrap is in flight");
+            tracing::debug!("cmux: browser.open ignored — another bootstrap is in flight");
             return;
         }
         if let Err(e) = bm.spawn_daemon_child_if_needed() {
-            eprintln!("cmux: browser.open failed to spawn daemon: {e}");
+            tracing::warn!("cmux: browser.open failed to spawn daemon: {e}");
             return;
         }
         bm.daemon_socket_path()
@@ -308,7 +302,7 @@ pub fn handle_browser_open(state: &Rc<RefCell<AppState>>) {
                 wire_browser_pane(&state_for_wire, widgets);
             }
             Ok(Err(e)) => {
-                eprintln!("cmux: browser.open bootstrap failed: {e}");
+                tracing::warn!("cmux: browser.open bootstrap failed: {e}");
                 if let Some(bm) = state_for_wire.borrow_mut().browser_manager.as_mut() {
                     // Tear down the hung daemon so the next attempt can
                     // re-spawn. Without this, daemon_process stays Some
@@ -319,7 +313,7 @@ pub fn handle_browser_open(state: &Rc<RefCell<AppState>>) {
                 }
             }
             Err(_) => {
-                eprintln!("cmux: browser.open worker dropped before completion");
+                tracing::debug!("cmux: browser.open worker dropped before completion");
                 if let Some(bm) = state_for_wire.borrow_mut().browser_manager.as_mut() {
                     bm.preview_state = crate::browser::PreviewState::Empty;
                 }
@@ -359,10 +353,10 @@ fn wire_browser_pane(
     {
         let mut s = state.borrow_mut();
         let runtime = s.runtime_handle.clone();
-        let bm = s.browser_manager.as_mut().unwrap();
+        let bm = s.browser_manager_mut();
         if let Some(ref rt) = runtime {
             if let Err(e) = bm.start_stream(rt, picture) {
-                eprintln!("cmux: browser start_stream failed: {e}");
+                tracing::warn!("cmux: browser start_stream failed: {e}");
             }
         }
     } // drop borrow
@@ -399,7 +393,7 @@ fn wire_browser_pane(
                     if let Err(e) =
                         crate::browser::send_command_to(&socket_path, action, params)
                     {
-                        eprintln!("cmux: nav {action} failed: {e}");
+                        tracing::warn!("cmux: nav {action} failed: {e}");
                         // Bail on first failure — later commands likely
                         // depended on the earlier one (viewport before
                         // navigate, press before release).
@@ -639,7 +633,9 @@ fn wire_browser_pane(
                 "modifiers": modifiers
             });
             if !text.is_empty() {
-                params.as_object_mut().unwrap().insert("text".to_string(), serde_json::json!(text));
+                if let Some(obj) = params.as_object_mut() {
+                    obj.insert("text".to_string(), serde_json::json!(text));
+                }
             }
             dispatch_nav(
                 runtime_for_kdown.as_ref(),
@@ -711,7 +707,7 @@ fn wire_browser_pane(
             // DOM snapshot can take seconds — fetch off the GTK main thread
             // and push the resulting text into the overlay via glib::idle.
             let Some(rt) = runtime_for_dev.as_ref() else {
-                eprintln!("cmux: devtools toggle skipped — no tokio runtime");
+                tracing::debug!("cmux: devtools toggle skipped — no tokio runtime");
                 return;
             };
             let socket = socket_for_dev.clone();

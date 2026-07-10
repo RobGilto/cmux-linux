@@ -1,9 +1,16 @@
+// No-panic policy (roadmap Phase 2): production code paths must not
+// unwrap/expect. Test modules opt out locally; the few justified sites
+// (startup-fatal, invariants established before handlers run) carry a
+// scoped #[allow] with a one-line justification. CI escalates to deny.
+#![warn(clippy::unwrap_used, clippy::expect_used)]
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 use gtk4::prelude::*;
 use gtk4::{Application, ApplicationWindow, gio, CssProvider, StyleContext};
 use std::ffi::CString;
 
 mod ghostty;
+mod logging;
 mod platform;
 mod workspace;
 mod split_engine;
@@ -111,14 +118,20 @@ fn main() {
     // before any threads exist (std::env::set_var is process-global).
     let config = crate::config::load_config();
     for note in crate::platform::apply_launch_env(&config.launch) {
-        eprintln!("cmux: launch env: {note}");
+        tracing::debug!("cmux: launch env: {note}");
     }
     let stripped = crate::platform::strip_child_env(&config.env.strip);
+
+    // Logging + panic hook (guard must live until exit for file flush).
+    let _log_guard = crate::logging::init();
+    crate::logging::startup_banner();
     if !stripped.is_empty() {
-        eprintln!("cmux: stripped from child env: {}", stripped.join(", "));
+        tracing::info!("stripped from child env: {}", stripped.join(", "));
     }
 
     // Tokio runtime for socket I/O (kept alive for app lifetime).
+    // Startup-fatal: with no runtime there is no socket server and no app.
+    #[allow(clippy::expect_used)]
     let runtime = tokio::runtime::Runtime::new()
         .expect("Failed to create tokio runtime");
     let runtime_handle = runtime.handle().clone();
@@ -135,7 +148,7 @@ fn main() {
         .flags(gio::ApplicationFlags::NON_UNIQUE)
         .build();
 
-    eprintln!("cmux: GtkApplication created, connecting activate signal");
+    tracing::debug!("cmux: GtkApplication created, connecting activate signal");
 
     // `--fresh` (or CMUX_FRESH=1) wipes the saved session before it is read, so the
     // app boots with a single clean workspace instead of restoring stale ones.
@@ -146,15 +159,15 @@ fn main() {
     // load_session() returns None if file is missing or invalid -- that's fine.
     let saved_session = if fresh {
         match crate::session::wipe_session() {
-            Ok(()) => eprintln!("cmux: --fresh: wiped saved session, starting clean"),
-            Err(e) => eprintln!("cmux: --fresh: could not wipe session: {e}"),
+            Ok(()) => tracing::debug!("cmux: --fresh: wiped saved session, starting clean"),
+            Err(e) => tracing::warn!("cmux: --fresh: could not wipe session: {e}"),
         }
         None
     } else {
         crate::session::load_session()
     };
     if let Some(ref s) = saved_session {
-        eprintln!("cmux: restoring session ({} workspace(s))", s.workspaces.len());
+        tracing::debug!("cmux: restoring session ({} workspace(s))", s.workspaces.len());
     }
 
     // Session save infrastructure: Notify for debounce, channel for session snapshots.
@@ -178,7 +191,7 @@ fn main() {
                 }
                 if let Some(session) = latest {
                     if let Err(e) = crate::session::save_session_atomic(&session) {
-                        eprintln!("cmux: session save failed: {e}");
+                        tracing::warn!("cmux: session save failed: {e}");
                     }
                 }
             }
@@ -197,18 +210,32 @@ fn main() {
         let save_notify = save_notify.clone();
         let session_tx = session_tx.clone();
         move |app| {
-            let rx = cmd_rx.lock().unwrap().take().expect("activate called more than once");
-            let session = saved_session.lock().unwrap().take().flatten();
+            // GTK may emit activate more than once (e.g. repeat launches of a
+            // NON_UNIQUE app); the receiver is consumable exactly once, so
+            // later activations are ignored instead of panicking.
+            let Some(rx) = cmd_rx
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .take()
+            else {
+                tracing::debug!("cmux: ignoring repeat activate signal");
+                return;
+            };
+            let session = saved_session
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .take()
+                .flatten();
             let smap = crate::config::ShortcutMap::from_config(&config.shortcuts);
             build_ui(app, runtime_handle.clone(), cmd_tx.clone(), rx, save_notify.clone(), session_tx.clone(), session, smap, &config);
         }
     });
 
-    eprintln!("cmux: calling app.run()");
+    tracing::debug!("cmux: calling app.run()");
     // Filter out cmux-only flags so GTK doesn't reject them as unknown options.
     let gtk_args: Vec<String> = std::env::args().filter(|a| a != "--fresh").collect();
     let _exit_code = app.run_with_args(&gtk_args);
-    eprintln!("cmux: app.run() returned");
+    tracing::debug!("cmux: app.run() returned");
 
     // Runtime drops here — tokio tasks are cancelled.
     drop(runtime);
@@ -233,7 +260,7 @@ fn build_ui(
 
         let argv: Vec<CString> = std::env::args()
             .filter(|a| a != "--fresh")
-            .map(|a| CString::new(a).unwrap())
+            .filter_map(|a| CString::new(a).ok())
             .collect();
         let mut ptrs: Vec<*mut i8> = argv.iter().map(|a| a.as_ptr() as *mut i8).collect();
         ffi::ghostty_init(ptrs.len(), ptrs.as_mut_ptr());
@@ -257,13 +284,15 @@ fn build_ui(
         let ghostty_app = ffi::ghostty_app_new(&runtime_config, config);
         ffi::ghostty_config_free(config);
         if ghostty_app.is_null() {
-            eprintln!("cmux: FATAL — ghostty_app_new returned null");
+            tracing::error!("cmux: FATAL — ghostty_app_new returned null");
             std::process::exit(1);
         }
         APP_PTR.store(ghostty_app as usize, Ordering::SeqCst);
         ghostty_app
     };
 
+    // Startup-fatal: a GUI app with no display cannot degrade.
+    #[allow(clippy::expect_used)]
     let display = gtk4::gdk::Display::default().expect("no display");
 
     // 2. Load CSS
@@ -367,9 +396,9 @@ fn build_ui(
 
     // Restore session if available (SESS-02), otherwise create default workspace.
     {
-        let has_session = saved_session.as_ref().map(|s| !s.workspaces.is_empty()).unwrap_or(false);
-        if has_session {
-            let session = saved_session.unwrap();
+        let session_with_workspaces =
+            saved_session.filter(|s| !s.workspaces.is_empty());
+        if let Some(session) = session_with_workspaces {
             if session.version >= 2 {
                 // Version 2: full tree restore (D-05)
                 let mut restored_count = 0;
@@ -378,12 +407,12 @@ fn build_ui(
                         restored_count += 1;
                     } else {
                         // D-15: tree invalid or too deep, fall back to single pane
-                        eprintln!("cmux: workspace '{}' tree invalid, creating default", ws_session.name);
+                        tracing::warn!("cmux: workspace '{}' tree invalid, creating default", ws_session.name);
                         state.borrow_mut().create_workspace();
                         state.borrow_mut().rename_active(ws_session.name.clone());
                     }
                 }
-                eprintln!("cmux: restored {} workspaces from v2 session", restored_count);
+                tracing::debug!("cmux: restored {} workspaces from v2 session", restored_count);
             } else {
                 // Version 1: name-only restore (auto-upgrade on next save per D-01)
                 for ws_session in &session.workspaces {
@@ -405,7 +434,7 @@ fn build_ui(
                         for engine in &mut s.split_engines {
                             engine.sync_surfaces_from_registry();
                         }
-                        eprintln!("cmux: synced surface pointers from registry after restore");
+                        tracing::debug!("cmux: synced surface pointers from registry after restore");
                     }
                     // Resume any restored agent surfaces (prompt 10 auto-resume).
                     crate::socket::handlers::schedule_agent_resumes(state_for_sync.clone());
@@ -615,4 +644,13 @@ fn build_ui(
 
     // 8. Present the window
     window.present();
+
+    // Test hook for the panic handler (roadmap Phase 2.5): CMUX_DEBUG_PANIC=1
+    // panics the main thread 2s after startup so the save-session-on-panic
+    // path can be exercised end to end. Never set in normal operation.
+    if std::env::var("CMUX_DEBUG_PANIC").as_deref() == Ok("1") {
+        glib::timeout_add_seconds_local(2, || {
+            panic!("CMUX_DEBUG_PANIC: deliberate test panic");
+        });
+    }
 }

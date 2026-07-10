@@ -391,7 +391,7 @@ impl SplitEngine {
         depth: u32,
     ) -> Option<SplitNode> {
         if depth > 16 {
-            eprintln!("cmux: session restore tree depth > 16, falling back (D-14)");
+            tracing::debug!("cmux: session restore tree depth > 16, falling back (D-14)");
             return None;
         }
         match data {
@@ -611,7 +611,7 @@ impl SplitEngine {
         };
 
         // Create new GLArea + surface for the new pane.
-        eprintln!(
+        tracing::debug!(
             "cmux: split_active calling create_surface for new_pane_id={}",
             new_pane_id
         );
@@ -816,18 +816,18 @@ impl SplitEngine {
                 // First try: controllers on the Paned itself
                 let controllers = paned.observe_controllers();
                 let n = controllers.n_items();
-                eprintln!("cmux: Paned has {} controllers", n);
+                tracing::debug!("cmux: Paned has {} controllers", n);
                 for i in 0..n {
                     if let Some(obj) = controllers.item(i) {
-                        eprintln!("cmux:   controller[{}]: {}", i, obj.type_().name());
+                        tracing::debug!("cmux:   controller[{}]: {}", i, obj.type_().name());
                         if let Ok(gesture) = obj.downcast::<gtk4::GestureDrag>() {
-                            eprintln!("cmux:   -> found GestureDrag on Paned, connecting drag-end");
+                            tracing::debug!("cmux:   -> found GestureDrag on Paned, connecting drag-end");
                             gesture.connect_drag_end(|_gesture, _offset_x, _offset_y| {
-                                eprintln!("cmux: GestureDrag drag-end fired on Paned — deferring focus restore to idle");
+                                tracing::debug!("cmux: GestureDrag drag-end fired on Paned — deferring focus restore to idle");
                                 // Defer to idle so GTK has time to fully release the gesture
                                 // and clean up the event sequence before we move focus.
                                 gtk4::glib::idle_add_local_once(|| {
-                                    eprintln!("cmux: drag-end idle: restoring focus now");
+                                    tracing::debug!("cmux: drag-end idle: restoring focus now");
                                     restore_active_pane_focus();
                                 });
                             });
@@ -842,25 +842,25 @@ impl SplitEngine {
                     let mut child = paned.first_child();
                     while let Some(ref widget) = child {
                         let type_name = widget.type_().name();
-                        eprintln!("cmux: Paned child: {}", type_name);
+                        tracing::debug!("cmux: Paned child: {}", type_name);
                         let ctrl_list = widget.observe_controllers();
                         let cn = ctrl_list.n_items();
                         for i in 0..cn {
                             if let Some(obj) = ctrl_list.item(i) {
-                                eprintln!(
+                                tracing::debug!(
                                     "cmux:   child controller[{}]: {}",
                                     i,
                                     obj.type_().name()
                                 );
                                 if let Ok(gesture) = obj.downcast::<gtk4::GestureDrag>() {
-                                    eprintln!(
+                                    tracing::debug!(
                                         "cmux:   -> found GestureDrag on {}, connecting drag-end",
                                         type_name
                                     );
                                     gesture.connect_drag_end(|_gesture, _offset_x, _offset_y| {
-                                        eprintln!("cmux: GestureDrag drag-end fired on separator — deferring focus restore to idle");
+                                        tracing::debug!("cmux: GestureDrag drag-end fired on separator — deferring focus restore to idle");
                                         gtk4::glib::idle_add_local_once(|| {
-                                            eprintln!("cmux: separator drag-end idle: restoring focus now");
+                                            tracing::debug!("cmux: separator drag-end idle: restoring focus now");
                                             restore_active_pane_focus();
                                         });
                                     });
@@ -877,7 +877,7 @@ impl SplitEngine {
                 }
 
                 if !found_gesture {
-                    eprintln!("cmux: WARNING — no GestureDrag found on Paned or its children, falling back to notify::position");
+                    tracing::debug!("cmux: WARNING — no GestureDrag found on Paned or its children, falling back to notify::position");
                     // Fallback: use notify::position but debounced via idle.
                     // connect_notify requires Send+Sync, so use AtomicBool instead of Rc<Cell>.
                     let restore_pending =

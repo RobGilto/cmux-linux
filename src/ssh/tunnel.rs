@@ -44,7 +44,7 @@ pub async fn run_ssh_lifecycle(
         // Deploy if first attempt
         if attempt == 0 {
             if let Err(e) = crate::ssh::deploy::deploy_remote(&target).await {
-                eprintln!("cmux: SSH deploy failed: {e}");
+                tracing::warn!("cmux: SSH deploy failed: {e}");
 
                 // Classify: binary-not-found is permanent, everything else is transient
                 let kind = if e.contains("not found at") {
@@ -58,7 +58,7 @@ pub async fn run_ssh_lifecycle(
                         workspace_id,
                         state: ConnectionState::Disconnected,
                     });
-                    eprintln!("cmux: SSH permanent failure, giving up: {e}");
+                    tracing::debug!("cmux: SSH permanent failure, giving up: {e}");
                     break;
                 }
 
@@ -109,7 +109,7 @@ pub async fn run_ssh_lifecycle(
                             line.clear();
                             match buf.read_line(&mut line).await {
                                 Ok(0) => break,
-                                Ok(_) => eprintln!("cmux: SSH stderr: {}", line.trim_end()),
+                                Ok(_) => tracing::debug!("cmux: SSH stderr: {}", line.trim_end()),
                                 Err(_) => break,
                             }
                         }
@@ -123,9 +123,9 @@ pub async fn run_ssh_lifecycle(
                     let hello = serde_json::json!({"jsonrpc":"2.0","id":1,"method":"hello","params":{}});
                     let hello_line = format!("{}\n", hello);
                     if let Err(e) = buf_writer.write_all(hello_line.as_bytes()).await {
-                        eprintln!("cmux: SSH handshake write failed: {e}");
+                        tracing::warn!("cmux: SSH handshake write failed: {e}");
                     } else if let Err(e) = buf_writer.flush().await {
-                        eprintln!("cmux: SSH handshake flush failed: {e}");
+                        tracing::warn!("cmux: SSH handshake flush failed: {e}");
                     } else {
                         // Run bidirectional proxy routing
                         run_proxy_routing(
@@ -140,7 +140,7 @@ pub async fn run_ssh_lifecycle(
 
                 // Wait for SSH process to exit
                 let exit_status = child.wait().await;
-                eprintln!("cmux: SSH to {target} exited: {exit_status:?}");
+                tracing::debug!("cmux: SSH to {target} exited: {exit_status:?}");
 
                 // D-06: inject disconnect message into all active panes
                 if let Ok(streams) = bridge.streams.lock() {
@@ -159,7 +159,7 @@ pub async fn run_ssh_lifecycle(
                 });
             }
             Err(e) => {
-                eprintln!("cmux: SSH connection to {target} failed: {e}");
+                tracing::warn!("cmux: SSH connection to {target} failed: {e}");
                 let _ = ssh_tx.send(SshEvent::StateChanged {
                     workspace_id,
                     state: ConnectionState::Disconnected,
@@ -168,7 +168,7 @@ pub async fn run_ssh_lifecycle(
         }
 
         if attempt >= MAX_RETRIES {
-            eprintln!("cmux: SSH max retries ({MAX_RETRIES}) exceeded for {target}, giving up");
+            tracing::debug!("cmux: SSH max retries ({MAX_RETRIES}) exceeded for {target}, giving up");
             let _ = ssh_tx.send(SshEvent::StateChanged {
                 workspace_id,
                 state: ConnectionState::Disconnected,
@@ -178,7 +178,7 @@ pub async fn run_ssh_lifecycle(
 
         // Exponential backoff before reconnect (per D-14)
         let backoff = backoff_duration(attempt);
-        eprintln!(
+        tracing::debug!(
             "cmux: SSH reconnecting to {target} in {}s (attempt {})",
             backoff.as_secs(),
             attempt + 1
@@ -222,7 +222,7 @@ async fn run_proxy_routing(
                     }
                 }
                 Err(e) => {
-                    eprintln!("cmux: SSH stdout read error: {e}");
+                    tracing::warn!("cmux: SSH stdout read error: {e}");
                     break;
                 }
             }
@@ -237,10 +237,10 @@ async fn run_proxy_routing(
         for pane_id in pane_ids {
             match open_remote_stream(&writer, bridge, pane_id, &pending, ssh_tx, 80, 24).await {
                 Ok(stream_id) => {
-                    eprintln!("cmux: opened remote stream {stream_id} for pane {pane_id}");
+                    tracing::debug!("cmux: opened remote stream {stream_id} for pane {pane_id}");
                 }
                 Err(e) => {
-                    eprintln!("cmux: failed to open remote stream for pane {pane_id}: {e}");
+                    tracing::warn!("cmux: failed to open remote stream for pane {pane_id}: {e}");
                 }
             }
         }
@@ -319,7 +319,7 @@ fn handle_incoming_message(
                     .get("error")
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown");
-                eprintln!("cmux: proxy stream error for {stream_id}: {error}");
+                tracing::warn!("cmux: proxy stream error for {stream_id}: {error}");
                 // Treat like EOF
                 if let Ok(s2p) = bridge.stream_to_pane.lock() {
                     if let Some(&pane_id) = s2p.get(stream_id) {
@@ -330,7 +330,7 @@ fn handle_incoming_message(
                 }
             }
             _ => {
-                eprintln!("cmux: unknown SSH event: {event_name}");
+                tracing::debug!("cmux: unknown SSH event: {event_name}");
             }
         }
         return;

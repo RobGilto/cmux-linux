@@ -167,19 +167,14 @@ impl BrowserManager {
             .map_err(|e| format!("Failed to connect to daemon socket: {}", e))?;
 
         let req_id = format!("cmux-{}", rand_u64());
-        let mut request = if let Value::Object(map) = params {
-            Value::Object(map)
+        let mut map = if let Value::Object(map) = params {
+            map
         } else {
-            Value::Object(serde_json::Map::new())
+            serde_json::Map::new()
         };
-        request
-            .as_object_mut()
-            .unwrap()
-            .insert("id".to_string(), Value::String(req_id));
-        request
-            .as_object_mut()
-            .unwrap()
-            .insert("action".to_string(), Value::String(action.to_string()));
+        map.insert("id".to_string(), Value::String(req_id));
+        map.insert("action".to_string(), Value::String(action.to_string()));
+        let request = Value::Object(map);
 
         let mut json = serde_json::to_string(&request)
             .map_err(|e| format!("Failed to serialize request: {}", e))?;
@@ -274,7 +269,7 @@ impl BrowserManager {
             let (ws_stream, _) = match ws_result {
                 Ok(conn) => conn,
                 Err(e) => {
-                    eprintln!("cmux: browser stream WS connect failed: {}", e);
+                    tracing::warn!("cmux: browser stream WS connect failed: {}", e);
                     return;
                 }
             };
@@ -283,7 +278,7 @@ impl BrowserManager {
                 let msg = match msg_result {
                     Ok(m) => m,
                     Err(e) => {
-                        eprintln!("cmux: browser stream error: {}", e);
+                        tracing::warn!("cmux: browser stream error: {}", e);
                         break;
                     }
                 };
@@ -568,7 +563,7 @@ fn is_executable_file(path: &std::path::Path) -> bool {
 ///   5. None — let agent-browser do its own discovery and fail loudly.
 fn resolve_chromium_path(config_override: Option<&str>) -> Option<PathBuf> {
     let log = |source: &str, p: &std::path::Path| {
-        eprintln!("cmux: chromium binary = {} (source: {source})", p.display());
+        tracing::debug!("cmux: chromium binary = {} (source: {source})", p.display());
     };
 
     if let Some(p) = config_override.filter(|s| !s.is_empty()) {
@@ -577,7 +572,7 @@ fn resolve_chromium_path(config_override: Option<&str>) -> Option<PathBuf> {
             log("config.toml", &pb);
             return Some(pb);
         }
-        eprintln!(
+        tracing::debug!(
             "cmux: chromium_path '{}' from config is missing or not executable; ignoring and falling back",
             p,
         );
@@ -669,19 +664,14 @@ pub fn send_command_to(
         .map_err(|e| format!("Failed to connect to daemon socket: {}", e))?;
 
     let req_id = format!("cmux-{}", rand_u64());
-    let mut request = if let Value::Object(map) = params {
-        Value::Object(map)
+    let mut map = if let Value::Object(map) = params {
+        map
     } else {
-        Value::Object(serde_json::Map::new())
+        serde_json::Map::new()
     };
-    request
-        .as_object_mut()
-        .unwrap()
-        .insert("id".to_string(), Value::String(req_id));
-    request
-        .as_object_mut()
-        .unwrap()
-        .insert("action".to_string(), Value::String(action.to_string()));
+    map.insert("id".to_string(), Value::String(req_id));
+    map.insert("action".to_string(), Value::String(action.to_string()));
+    let request = Value::Object(map);
 
     let mut json = serde_json::to_string(&request)
         .map_err(|e| format!("Failed to serialize request: {}", e))?;

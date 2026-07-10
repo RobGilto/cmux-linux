@@ -1,7 +1,13 @@
 pub mod auth;
 pub mod commands;
+pub mod error;
 pub mod events;
 pub mod handlers;
+
+/// How long the socket side waits for the GTK main thread to answer one
+/// request before replying `timeout`. A wedged main thread must not hang
+/// every connected client forever.
+const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
@@ -16,7 +22,11 @@ pub fn socket_path() -> PathBuf {
 
 /// Returns the directory containing the socket file.
 fn socket_dir() -> PathBuf {
-    socket_path().parent().unwrap().to_path_buf()
+    // socket_path() always ends in cmux/cmux.sock, so a parent exists.
+    socket_path()
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
 }
 
 /// Returns the last-socket-path marker file path.
@@ -43,11 +53,11 @@ pub fn start_socket_server(
 
     // Create directory with restrictive permissions.
     if let Err(e) = std::fs::create_dir_all(&dir) {
-        eprintln!("cmux: socket dir create failed: {e}");
+        tracing::warn!("cmux: socket dir create failed: {e}");
         return;
     }
     if let Err(e) = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)) {
-        eprintln!("cmux: socket dir chmod failed: {e}");
+        tracing::warn!("cmux: socket dir chmod failed: {e}");
     }
 
     // Remove stale socket from previous run (ignore ENOENT).
@@ -59,22 +69,22 @@ pub fn start_socket_server(
     let listener = match tokio::net::UnixListener::bind(&sock_path) {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("cmux: socket bind failed at {}: {e}", sock_path.display());
+            tracing::warn!("cmux: socket bind failed at {}: {e}", sock_path.display());
             return;
         }
     };
 
     // Set socket file mode to 0600 (owner read/write only).
     if let Err(e) = std::fs::set_permissions(&sock_path, std::fs::Permissions::from_mode(0o600)) {
-        eprintln!("cmux: socket chmod failed: {e}");
+        tracing::warn!("cmux: socket chmod failed: {e}");
     }
 
     // Write last-socket-path marker so cmux.py can discover the socket.
     if let Err(e) = std::fs::write(last_socket_path_marker(), sock_path.to_string_lossy().as_bytes()) {
-        eprintln!("cmux: last-socket-path write failed: {e}");
+        tracing::warn!("cmux: last-socket-path write failed: {e}");
     }
 
-    eprintln!("cmux: socket server listening at {}", sock_path.display());
+    tracing::debug!("cmux: socket server listening at {}", sock_path.display());
 
     // Spawn the accept loop in tokio.
     runtime.spawn(async move {
@@ -88,15 +98,15 @@ pub fn start_socket_server(
                             tokio::spawn(handle_connection(stream, tx));
                         }
                         Ok(false) => {
-                            eprintln!("cmux: socket connection rejected (UID mismatch)");
+                            tracing::warn!("cmux: socket connection rejected (UID mismatch)");
                         }
                         Err(e) => {
-                            eprintln!("cmux: SO_PEERCRED check failed: {e}");
+                            tracing::warn!("cmux: SO_PEERCRED check failed: {e}");
                         }
                     }
                 }
                 Err(e) => {
-                    eprintln!("cmux: socket accept error: {e}");
+                    tracing::warn!("cmux: socket accept error: {e}");
                     break;
                 }
             }
@@ -235,11 +245,12 @@ async fn dispatch_line(
     let req: serde_json::Value = match serde_json::from_str(line) {
         Ok(v) => v,
         Err(_) => {
-            return serde_json::json!({
-                "id": null,
-                "ok": false,
-                "error": {"code": "parse_error", "message": "invalid JSON"}
-            }).to_string();
+            return error::error_reply(
+                serde_json::Value::Null,
+                error::ErrorCode::ParseError,
+                "invalid JSON",
+            )
+            .to_string();
         }
     };
 
@@ -431,7 +442,8 @@ async fn dispatch_line(
 
         // Route all other browser.* methods to the generic proxy (P0/P1 parity)
         _ if method.starts_with("browser.") => {
-            let action = method.strip_prefix("browser.").unwrap().to_string();
+            // Guard above guarantees the prefix; default is unreachable.
+            let action = method.strip_prefix("browser.").unwrap_or_default().to_string();
             let surface_ref = params.get("surface_ref").and_then(|v| v.as_str()).map(String::from);
             commands::SocketCommand::BrowserAction {
                 req_id: req_id.clone(),
@@ -450,18 +462,34 @@ async fn dispatch_line(
     };
 
     if cmd_tx.send(cmd).is_err() {
-        return serde_json::json!({
-            "id": req_id,
-            "ok": false,
-            "error": {"code": "internal_error", "message": "handler channel closed"}
-        }).to_string();
+        return error::error_reply(
+            req_id,
+            error::ErrorCode::Internal,
+            "handler channel closed",
+        )
+        .to_string();
     }
 
-    resp_rx.await.unwrap_or_else(|_| serde_json::json!({
-        "id": req_id,
-        "ok": false,
-        "error": {"code": "internal_error", "message": "handler dropped response"}
-    })).to_string()
+    // Per-request deadline: a wedged GTK main thread answers `timeout`
+    // instead of hanging the client (and every queued request behind it).
+    match tokio::time::timeout(REQUEST_TIMEOUT, resp_rx).await {
+        Ok(Ok(response)) => response.to_string(),
+        Ok(Err(_)) => error::error_reply(
+            req_id,
+            error::ErrorCode::Internal,
+            "handler dropped response",
+        )
+        .to_string(),
+        Err(_) => error::error_reply(
+            req_id,
+            error::ErrorCode::Timeout,
+            &format!(
+                "main thread did not answer within {}s",
+                REQUEST_TIMEOUT.as_secs()
+            ),
+        )
+        .to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -474,6 +502,68 @@ mod tests {
         unsafe { std::env::set_var("XDG_RUNTIME_DIR", "/tmp/test-xdg") };
         let path = socket_path();
         assert_eq!(path, std::path::PathBuf::from("/tmp/test-xdg/cmux/cmux.sock"));
+    }
+
+    /// Malformed input: invalid JSON → structured parse_error, id null.
+    #[tokio::test]
+    async fn test_dispatch_invalid_json() {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let resp: serde_json::Value =
+            serde_json::from_str(&dispatch_line("not json at all", &tx).await)
+                .expect("reply must be JSON");
+        assert_eq!(resp["ok"], false);
+        assert_eq!(resp["error"]["code"], "parse_error");
+        assert_eq!(resp["id"], serde_json::Value::Null);
+    }
+
+    /// Malformed input: oversized garbage line — still a clean parse_error,
+    /// server-side reply, no panic.
+    #[tokio::test]
+    async fn test_dispatch_oversized_garbage() {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let big = "x".repeat(1_000_000);
+        let resp: serde_json::Value =
+            serde_json::from_str(&dispatch_line(&big, &tx).await)
+                .expect("reply must be JSON");
+        assert_eq!(resp["error"]["code"], "parse_error");
+    }
+
+    /// Unknown method routes to NotImplemented and the handler's reply is
+    /// forwarded verbatim (a fake main thread answers here).
+    #[tokio::test]
+    async fn test_dispatch_unknown_method() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            if let Some(commands::SocketCommand::NotImplemented { req_id, method, resp_tx }) =
+                rx.recv().await
+            {
+                let _ = resp_tx.send(serde_json::json!({
+                    "id": req_id, "ok": false,
+                    "error": {"code": "not_implemented", "message": method},
+                }));
+            }
+        });
+        let resp: serde_json::Value = serde_json::from_str(
+            &dispatch_line(r#"{"method":"no.such.method","id":42}"#, &tx).await,
+        )
+        .expect("reply must be JSON");
+        assert_eq!(resp["id"], 42);
+        assert_eq!(resp["error"]["code"], "not_implemented");
+    }
+
+    /// A dropped response channel (handler died) degrades to internal_error —
+    /// never a panic, never a hang.
+    #[tokio::test]
+    async fn test_dispatch_handler_dropped() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let _ = rx.recv().await; // receive and drop resp_tx without answering
+        });
+        let resp: serde_json::Value = serde_json::from_str(
+            &dispatch_line(r#"{"method":"system.ping","id":1}"#, &tx).await,
+        )
+        .expect("reply must be JSON");
+        assert_eq!(resp["error"]["code"], "internal_error");
     }
 
     /// SOCK-05: Focus policy whitelist is documented.

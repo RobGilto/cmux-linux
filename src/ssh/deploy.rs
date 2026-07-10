@@ -36,7 +36,7 @@ pub async fn deploy_remote(target: &str) -> Result<(), String> {
     // scp the binary
     let remote_dest = format!("{target}:~/.local/bin/cmuxd-remote");
     let scp_status = Command::new("scp")
-        .args([local_path.to_str().unwrap(), &remote_dest])
+        .args([local_path.to_string_lossy().as_ref(), &remote_dest])
         .status()
         .await
         .map_err(|e| format!("scp failed: {e}"))?;

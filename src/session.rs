@@ -39,6 +39,31 @@ pub fn save_session_atomic(data: &SessionData) -> std::io::Result<()> {
     save_session_to(data, &session_path())
 }
 
+/// Most recent snapshot produced by AppState::trigger_session_save, kept for
+/// the panic hook: the debounce task may not have flushed it to disk yet
+/// when the process dies.
+static LAST_SNAPSHOT: std::sync::Mutex<Option<SessionData>> =
+    std::sync::Mutex::new(None);
+
+/// Record the latest snapshot (called on the GTK main thread on every
+/// session mutation, before the debounced disk write).
+pub fn remember_snapshot(data: SessionData) {
+    *LAST_SNAPSHOT.lock().unwrap_or_else(|p| p.into_inner()) = Some(data);
+}
+
+/// Panic-hook path: write the last remembered snapshot to disk.
+/// Returns Ok(false) when there is nothing to save.
+pub fn save_last_snapshot() -> std::io::Result<bool> {
+    let snapshot = LAST_SNAPSHOT
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
+    match snapshot {
+        Some(data) => save_session_atomic(&data).map(|()| true),
+        None => Ok(false),
+    }
+}
+
 /// Delete the saved session so the next launch starts clean (the `--fresh` flag).
 /// Removes both session.json and any leftover session.json.tmp. Missing files are
 /// not an error -- a wipe of nothing is still a successful wipe.
@@ -84,24 +109,24 @@ pub fn load_session_from(path: &Path) -> Option<SessionData> {
     let content = match std::fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!("cmux: no session file at {}", path.display());
+            tracing::debug!("cmux: no session file at {}", path.display());
             return None;
         }
         Err(e) => {
-            eprintln!("cmux: session file read error: {e}");
+            tracing::warn!("cmux: session file read error: {e}");
             return None;
         }
     };
     match serde_json::from_str::<SessionData>(&content) {
         Ok(data) => {
             if data.version != 1 && data.version != 2 {
-                eprintln!("cmux: session version {} not supported, ignoring", data.version);
+                tracing::debug!("cmux: session version {} not supported, ignoring", data.version);
                 return None;
             }
             Some(data)
         }
         Err(e) => {
-            eprintln!("cmux: session JSON invalid: {e}");
+            tracing::warn!("cmux: session JSON invalid: {e}");
             None
         }
     }

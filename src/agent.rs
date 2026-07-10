@@ -159,7 +159,9 @@ pub fn install_hooks() -> Result<Vec<String>, String> {
     if !root.is_object() {
         return Err("~/.claude/settings.json is not a JSON object".into());
     }
-    let obj = root.as_object_mut().unwrap();
+    let Some(obj) = root.as_object_mut() else {
+        return Err("~/.claude/settings.json is not a JSON object".into());
+    };
     let hooks = obj
         .entry("hooks")
         .or_insert_with(|| serde_json::json!({}));

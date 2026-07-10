@@ -55,7 +55,7 @@ pub unsafe extern "C" fn wakeup_cb(_userdata: *mut std::ffi::c_void) {
         // Log wakeup occasionally to verify it's firing
         let count = WAKEUP_COUNT.fetch_add(1, Ordering::SeqCst) + 1;
         if count % 60 == 1 {
-            eprintln!("cmux: wakeup_cb #{}", count);
+            tracing::debug!("cmux: wakeup_cb #{}", count);
         }
 
         let app_ptr = APP_PTR.load(Ordering::SeqCst);
@@ -92,7 +92,7 @@ pub unsafe extern "C" fn close_surface_cb(_userdata: *mut std::ffi::c_void, _pro
     // Identify which pane closed via SURFACE_REGISTRY (populated at surface creation).
     // Full AppState.close_pane() dispatch is wired in Plan 04.
     // For now, log the event so the executor can verify routing works.
-    eprintln!("cmux: close_surface_cb fired — per-pane close will be handled by AppState");
+    tracing::debug!("cmux: close_surface_cb fired — per-pane close will be handled by AppState");
 }
 
 /// Action callback — Ghostty fires actions (e.g. new tab, font size changes).

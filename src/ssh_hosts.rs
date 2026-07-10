@@ -66,7 +66,7 @@ pub fn save_host(target: &str) {
     let path = ssh_hosts_path();
     if let Some(parent) = path.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
-            eprintln!("cmux: failed to create config dir: {e}");
+            tracing::warn!("cmux: failed to create config dir: {e}");
             return;
         }
     }
@@ -74,7 +74,7 @@ pub fn save_host(target: &str) {
     let content = match toml::to_string_pretty(&file) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("cmux: failed to serialize ssh_hosts: {e}");
+            tracing::warn!("cmux: failed to serialize ssh_hosts: {e}");
             return;
         }
     };
@@ -82,11 +82,11 @@ pub fn save_host(target: &str) {
     // Atomic write: write to .tmp then rename
     let tmp_path = path.with_extension("toml.tmp");
     if let Err(e) = std::fs::write(&tmp_path, &content) {
-        eprintln!("cmux: failed to write ssh_hosts tmp: {e}");
+        tracing::warn!("cmux: failed to write ssh_hosts tmp: {e}");
         return;
     }
     if let Err(e) = std::fs::rename(&tmp_path, &path) {
-        eprintln!("cmux: failed to rename ssh_hosts tmp: {e}");
+        tracing::warn!("cmux: failed to rename ssh_hosts tmp: {e}");
     }
 }
 

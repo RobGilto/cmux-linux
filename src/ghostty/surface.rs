@@ -3,6 +3,15 @@ use gtk4::glib;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+/// GL context facts recorded at first realize (or the first realize error),
+/// for `system.identify` and `cmux doctor`. One-shot: first writer wins.
+pub static GL_INFO: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// What the renderer saw, for diagnostics. None until a GLArea realizes.
+pub fn gl_info() -> Option<&'static str> {
+    GL_INFO.get().map(|s| s.as_str())
+}
+
 /// I/O mode for a Ghostty surface.
 /// - `Exec`: normal mode — Ghostty spawns a local shell process.
 /// - `Manual`: SSH remote mode — keystrokes route through io_write_cb to the SSH bridge.
@@ -45,14 +54,14 @@ pub fn create_surface(
 
     use crate::ghostty::callbacks::{self, SURFACE_PTR};
 
-    eprintln!(
+    tracing::debug!(
         "cmux: create_surface called for pane_id={}, inherited_config={}",
         pane_id,
         inherited_config.is_some()
     );
 
     let gl_area = gtk4::GLArea::new();
-    eprintln!(
+    tracing::debug!(
         "cmux: created GLArea {:p} for pane_id={}",
         gl_area.as_ptr(),
         pane_id
@@ -99,15 +108,30 @@ pub fn create_surface(
         let io_mode = io_mode;
         let cwd = cwd.clone();
         move |area| {
-            eprintln!(
+            tracing::debug!(
                 "cmux: GLArea {:p} realize for pane_id={} — making GL context current",
                 area.as_ptr(),
                 pane_id_for_log
             );
             area.make_current();
             if let Some(err) = area.error() {
-                eprintln!("cmux: GLArea realize error: {err}");
-                std::process::exit(1); // Per D-09: no GUI error dialog in Phase 1
+                // No-panic policy: one pane failing to get a GL context must
+                // not kill the app (and every other agent in it). The pane
+                // stays blank; the error is logged, exposed via GL_INFO for
+                // identify/doctor, and pushed as a surface.error event.
+                tracing::error!(
+                    "cmux: GLArea realize FAILED for pane {pane_id_for_log}: {err} \
+                     (likely GL context mismatch — check `cmux doctor` / launch_env)"
+                );
+                let _ = GL_INFO.set(format!("ERROR: {err}"));
+                crate::socket::events::emit(
+                    "surface.error",
+                    serde_json::json!({
+                        "pane_id": pane_id_for_log,
+                        "error": err.to_string(),
+                    }),
+                );
+                return;
             }
 
             // Check if surface already exists (re-realize after reparent).
@@ -136,7 +160,7 @@ pub fn create_surface(
             // (Phase C), the correct fallback is to allocate a fresh surface.
             // See myc task #1 (see docs/phase-c-plan.md §1).
             if let Some(stale_surface) = cell.borrow_mut().take() {
-                eprintln!(
+                tracing::debug!(
                     "cmux: GLArea {:p} re-realized with cached surface {:p} — freeing and re-creating (display_realized export missing)",
                     area.as_ptr(),
                     stale_surface,
@@ -157,19 +181,25 @@ pub fn create_surface(
                 }
             }
 
-            eprintln!("cmux: GL context made current, no error");
-            eprintln!(
+            tracing::debug!("cmux: GL context made current, no error");
+            tracing::debug!(
                 "cmux: GL area size at realize: {}x{}",
                 area.width(),
                 area.height()
             );
-            eprintln!("cmux: GL scale factor at realize: {}", area.scale_factor());
+            tracing::debug!("cmux: GL scale factor at realize: {}", area.scale_factor());
 
-            // Log GL version and renderer info for diagnostics.
+            // Log GL version info and record it once for identify/doctor —
+            // the first fact needed when debugging a blank window.
             if let Some(ctx) = area.context() {
                 let (major, minor) = ctx.version();
-                eprintln!("cmux: GL context version: {major}.{minor}");
-                eprintln!("cmux: GL context is_legacy: {}", ctx.is_legacy());
+                tracing::debug!("cmux: GL context version: {major}.{minor}");
+                tracing::debug!("cmux: GL context is_legacy: {}", ctx.is_legacy());
+                let _ = GL_INFO.set(format!(
+                    "GL {major}.{minor}{} via {}",
+                    if ctx.is_legacy() { " (legacy)" } else { "" },
+                    std::env::var("GDK_BACKEND").unwrap_or_else(|_| "default-backend".into()),
+                ));
             }
 
             // Create the ghostty surface now that GL context is current.
@@ -222,19 +252,29 @@ pub fn create_surface(
                     surface_config.working_directory = cstr.as_ptr();
                 }
 
-                eprintln!("cmux: calling ghostty_surface_new");
+                tracing::debug!("cmux: calling ghostty_surface_new");
                 let s = ffi::ghostty_surface_new(ghostty_app, &surface_config);
                 if s.is_null() {
-                    eprintln!("cmux: FATAL — ghostty_surface_new returned null");
-                    std::process::exit(1);
+                    // No-panic policy: fail this pane, not the whole fleet.
+                    tracing::error!(
+                        "cmux: ghostty_surface_new returned null for pane {pane_id_for_log} — pane disabled"
+                    );
+                    crate::socket::events::emit(
+                        "surface.error",
+                        serde_json::json!({
+                            "pane_id": pane_id_for_log,
+                            "error": "ghostty_surface_new returned null",
+                        }),
+                    );
+                    return;
                 }
-                eprintln!("cmux: ghostty_surface_new succeeded: {:p}", s);
+                tracing::debug!("cmux: ghostty_surface_new succeeded: {:p}", s);
                 // Check GL error state after surface creation.
                 let gl_err = gl_get_error();
                 if gl_err != 0 {
-                    eprintln!("cmux: GL error after ghostty_surface_new: 0x{gl_err:x}");
+                    tracing::warn!("cmux: GL error after ghostty_surface_new: 0x{gl_err:x}");
                 } else {
-                    eprintln!("cmux: GL error state after ghostty_surface_new: OK");
+                    tracing::debug!("cmux: GL error state after ghostty_surface_new: OK");
                 }
                 s
             };
@@ -255,16 +295,16 @@ pub fn create_surface(
                 let phys_h = (h as f64 * scale) as u32;
                 if phys_w > 0 && phys_h > 0 {
                     ffi::ghostty_surface_set_size(surface, phys_w, phys_h);
-                    eprintln!("cmux: ghostty_surface_set_size({}, {})", phys_w, phys_h);
+                    tracing::debug!("cmux: ghostty_surface_set_size({}, {})", phys_w, phys_h);
                 } else {
-                    eprintln!(
+                    tracing::debug!(
                         "cmux: ghostty_surface_set_size skipped at realize time (size 0x0) — connect_resize will provide real size"
                     );
                 }
                 ffi::ghostty_surface_set_content_scale(surface, scale, scale);
-                eprintln!("cmux: ghostty_surface_set_content_scale({scale})");
+                tracing::debug!("cmux: ghostty_surface_set_content_scale({scale})");
                 ffi::ghostty_surface_set_focus(surface, true);
-                eprintln!("cmux: ghostty_surface_set_focus(true)");
+                tracing::debug!("cmux: ghostty_surface_set_focus(true)");
             }
 
             // Store the surface pointer BEFORE grab_focus so that EventControllerFocus
@@ -304,7 +344,7 @@ pub fn create_surface(
         let cell_unrealize = surface_cell.clone();
         let userdata_unrealize = ssh_userdata_cell.clone();
         gl_area.connect_unrealize(move |area| {
-            eprintln!(
+            tracing::debug!(
                 "cmux: GLArea {:p} pane={} UNREALIZE — freeing GL resources",
                 area.as_ptr(),
                 pane_id_unrealize,
@@ -332,7 +372,7 @@ pub fn create_surface(
             }
 
             if let Some(surface) = cell_unrealize.borrow_mut().take() {
-                eprintln!(
+                tracing::debug!(
                     "cmux: freeing ghostty surface {:p} on unrealize",
                     surface,
                 );
@@ -372,7 +412,7 @@ pub fn create_surface(
             render_count.set(count);
             // Log every render — keep the session short!
             if true {
-                eprintln!(
+                tracing::debug!(
                     "cmux: render #{} pane={} area={:p} size={}x{} err={:?}",
                     count,
                     pane_id_render,
@@ -391,7 +431,7 @@ pub fn create_surface(
                         glGetIntegerv(GL_VIEWPORT, viewport.as_mut_ptr());
                         glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &mut draw_fbo);
                     }
-                    eprintln!(
+                    tracing::debug!(
                         "cmux: render GL state pane={}: viewport={}x{}+{}+{} draw_fbo={}",
                         pane_id_render,
                         viewport[2],
@@ -405,7 +445,7 @@ pub fn create_surface(
                     ffi::ghostty_surface_draw(surface);
                 }
             } else {
-                eprintln!("cmux: render callback — surface not yet initialized, skipping draw");
+                tracing::debug!("cmux: render callback — surface not yet initialized, skipping draw");
             }
             gtk4::glib::Propagation::Stop // suppress GTK default render
         }
@@ -483,7 +523,7 @@ pub fn create_surface(
                     .and_then(|n| n.surface())
                     .map(|s| s.scale())
                     .unwrap_or(widget.scale_factor() as f64);
-                eprintln!("cmux: scale-factor changed to {} for surface {:p}", scale, surface);
+                tracing::debug!("cmux: scale-factor changed to {} for surface {:p}", scale, surface);
                 unsafe {
                     ffi::ghostty_surface_set_content_scale(surface, scale, scale);
                     ffi::ghostty_surface_refresh(surface); // trigger redraw at new scale

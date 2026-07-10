@@ -155,7 +155,7 @@ pub fn register_actions(
                 }
             });
         let Some(script) = script else {
-            eprintln!("cmux: install-chromium.sh not found alongside the cmux binary");
+            tracing::debug!("cmux: install-chromium.sh not found alongside the cmux binary");
             return;
         };
         // Different terminal emulators take very different arg shapes for
@@ -210,12 +210,12 @@ pub fn register_actions(
                 }
             }
             if let Err(e) = cmd.spawn() {
-                eprintln!("cmux: failed to spawn {name}: {e}; trying next terminal");
+                tracing::warn!("cmux: failed to spawn {name}: {e}; trying next terminal");
                 continue;
             }
             return;
         }
-        eprintln!(
+        tracing::debug!(
             "cmux: no usable terminal emulator found; run manually: bash {}",
             script.display()
         );
