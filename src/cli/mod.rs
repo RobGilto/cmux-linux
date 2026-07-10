@@ -41,6 +41,19 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
+    /// Launch cmux-app (detached) and wait until it answers ping.
+    /// Idempotent: exits 0 immediately if an instance is already running.
+    Launch {
+        /// Wipe the saved session before startup (clean slate)
+        #[arg(long)]
+        fresh: bool,
+        /// Seconds to wait for the app to answer ping
+        #[arg(long, default_value_t = 15)]
+        wait_secs: u64,
+        /// Path to the cmux-app binary (default: alongside this CLI, then $PATH)
+        #[arg(long, env = "CMUX_APP")]
+        app_path: Option<String>,
+    },
     /// Ping the running cmux instance
     Ping,
     /// Show cmux instance identity (version, platform, pid)
@@ -495,6 +508,11 @@ pub enum BrowserCommand {
 
 /// Run the CLI with the parsed arguments.
 pub fn run(cli: Cli) -> Result<(), CliError> {
+    // Launch is handled before socket resolution: there is no socket yet.
+    if let Commands::Launch { fresh, wait_secs, ref app_path } = cli.command {
+        return run_launch(&cli, fresh, wait_secs, app_path.as_deref());
+    }
+
     // Resolve socket path: --socket flag > discovery > error
     let socket_path = if let Some(ref path) = cli.socket {
         path.clone()
@@ -600,6 +618,136 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
     }
 
     Ok(())
+}
+
+/// Locate cmux-app: explicit path/$CMUX_APP > alongside this CLI > $PATH.
+fn find_app_binary(explicit: Option<&str>) -> Option<std::path::PathBuf> {
+    if let Some(p) = explicit {
+        let path = std::path::PathBuf::from(p);
+        return path.is_file().then_some(path);
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        // resolve the symlink first so ~/.local/bin/cmux -> target/debug/cmux
+        // finds the cmux-app sitting next to the real binary, not the link.
+        let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
+        if let Some(dir) = exe.parent() {
+            let candidate = dir.join("cmux-app");
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    let path_var = std::env::var_os("PATH")?;
+    std::env::split_paths(&path_var)
+        .map(|d| d.join("cmux-app"))
+        .find(|c| c.is_file())
+}
+
+/// `cmux launch`: spawn cmux-app detached (own session, output to a log
+/// file), then poll system.ping until it answers or the deadline passes.
+fn run_launch(
+    cli: &Cli,
+    fresh: bool,
+    wait_secs: u64,
+    app_path: Option<&str>,
+) -> Result<(), CliError> {
+    use std::os::unix::process::CommandExt as _;
+
+    let try_ping = |socket_override: &Option<String>| -> Option<String> {
+        let path = socket_override
+            .clone()
+            .or_else(discovery::discover_socket)?;
+        let mut c = socket_client::SocketClient::connect(
+            &path,
+            Duration::from_secs(2),
+        )
+        .ok()?;
+        c.call("system.ping", serde_json::json!({})).ok()?;
+        Some(path)
+    };
+
+    // Idempotent: an already-answering instance means we're done.
+    if let Some(path) = try_ping(&cli.socket) {
+        println!("cmux-app already running (socket: {path})");
+        return Ok(());
+    }
+
+    let app = find_app_binary(app_path).ok_or_else(|| {
+        CliError::ConnectionError(
+            "cmux-app binary not found (searched --app-path/$CMUX_APP, \
+             alongside the CLI, and $PATH)"
+                .into(),
+        )
+    })?;
+
+    // App output goes to a log file, not the caller's terminal — the app
+    // outlives this CLI invocation.
+    let log_dir = std::env::var("XDG_STATE_HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
+                .join(".local/state")
+        })
+        .join("cmux");
+    let _ = std::fs::create_dir_all(&log_dir);
+    let log_path = log_dir.join("launch.log");
+    let open_log = || {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+    };
+
+    let mut cmd = std::process::Command::new(&app);
+    if fresh {
+        cmd.arg("--fresh");
+    }
+    cmd.stdin(std::process::Stdio::null());
+    match (open_log(), open_log()) {
+        (Ok(out), Ok(err)) => {
+            cmd.stdout(out);
+            cmd.stderr(err);
+        }
+        _ => {
+            cmd.stdout(std::process::Stdio::null());
+            cmd.stderr(std::process::Stdio::null());
+        }
+    }
+    // Detach into its own session so the app survives this CLI (and its
+    // terminal) exiting — the in-process equivalent of `setsid`.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+    cmd.spawn().map_err(|e| {
+        CliError::ConnectionError(format!(
+            "failed to spawn {}: {e}",
+            app.display()
+        ))
+    })?;
+
+    if cli.verbose {
+        eprintln!("Spawned {} (log: {})", app.display(), log_path.display());
+    }
+
+    let deadline =
+        std::time::Instant::now() + Duration::from_secs(wait_secs.max(1));
+    loop {
+        if let Some(path) = try_ping(&cli.socket) {
+            println!("cmux-app ready (socket: {path})");
+            return Ok(());
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(CliError::ProtocolError(format!(
+                "cmux-app did not answer ping within {wait_secs}s \
+                 (see {} for startup errors)",
+                log_path.display()
+            )));
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
 }
 
 /// Map a BrowserCommand variant to its JSON-RPC method and params.
@@ -719,6 +867,8 @@ fn browser_command_to_rpc(cmd: &BrowserCommand) -> (&'static str, serde_json::Va
 fn command_to_rpc(cmd: &Commands) -> (&'static str, serde_json::Value) {
     use serde_json::{json, Value};
     match cmd {
+        // Launch never reaches RPC mapping — run() intercepts it first.
+        Commands::Launch { .. } => unreachable!("launch handled in run()"),
         Commands::Ping => ("system.ping", json!({})),
         Commands::Identify => ("system.identify", json!({})),
         Commands::Capabilities => ("system.capabilities", json!({})),

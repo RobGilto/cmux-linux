@@ -12,6 +12,91 @@ pub struct Config {
     pub ui: UiConfig,
     #[serde(default)]
     pub browser: BrowserConfig,
+    #[serde(default)]
+    pub launch: LaunchConfig,
+    #[serde(default)]
+    pub env: EnvConfig,
+    #[serde(default)]
+    pub window: WindowConfig,
+}
+
+/// Launch-time platform self-configuration -- [launch] in config.toml.
+/// Consumed by platform::apply_launch_env() before GTK init.
+#[derive(serde::Deserialize, Debug)]
+pub struct LaunchConfig {
+    /// GL workaround mode: "auto" (apply gl-prefer-gl when NVIDIA is
+    /// detected), "force" (always apply), "off" (never touch GDK_DEBUG).
+    #[serde(default = "default_gl_workaround")]
+    pub gl_workaround: String,
+    /// Old wrapper-script behavior: force GDK_BACKEND=x11 on NVIDIA+Wayland.
+    /// Off by default — native Wayland works once gl-prefer-gl is applied.
+    #[serde(default)]
+    pub force_x11_backend: bool,
+}
+
+fn default_gl_workaround() -> String {
+    "auto".to_string()
+}
+
+impl Default for LaunchConfig {
+    fn default() -> Self {
+        Self {
+            gl_workaround: default_gl_workaround(),
+            force_x11_backend: false,
+        }
+    }
+}
+
+/// Child-shell environment hygiene -- [env] in config.toml.
+#[derive(serde::Deserialize, Debug)]
+pub struct EnvConfig {
+    /// Env vars removed from the process before any shell spawns, so nested
+    /// agents don't inherit the parent agent's session identity. Supports a
+    /// trailing `*` glob. Set to [] to disable stripping entirely.
+    #[serde(default = "default_env_strip")]
+    pub strip: Vec<String>,
+}
+
+fn default_env_strip() -> Vec<String> {
+    crate::platform::DEFAULT_STRIP_PATTERNS
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+}
+
+impl Default for EnvConfig {
+    fn default() -> Self {
+        Self { strip: default_env_strip() }
+    }
+}
+
+/// Initial window geometry -- [window] in config.toml.
+/// TUI agents break in panes under ~20 columns; never start tiny.
+#[derive(serde::Deserialize, Debug)]
+pub struct WindowConfig {
+    /// Maximize the window on startup (default true).
+    #[serde(default = "default_true")]
+    pub start_maximized: bool,
+    /// Default window size when not maximized: [width, height].
+    #[serde(default = "default_window_size")]
+    pub default_size: [i32; 2],
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_window_size() -> [i32; 2] {
+    [1280, 800]
+}
+
+impl Default for WindowConfig {
+    fn default() -> Self {
+        Self {
+            start_maximized: default_true(),
+            default_size: default_window_size(),
+        }
+    }
 }
 
 /// Browser configuration section -- [browser] in config.toml.

@@ -4,6 +4,7 @@ use gtk4::{Application, ApplicationWindow, gio, CssProvider, StyleContext};
 use std::ffi::CString;
 
 mod ghostty;
+mod platform;
 mod workspace;
 mod split_engine;
 mod app_state;
@@ -105,6 +106,18 @@ popover.menu accelerator { color: #5b8dd9; font-size: 12px; }
 ";
 
 fn main() {
+    // Config must load before anything else: platform self-configuration
+    // reads it, and it must mutate the environment before GTK/GDK init and
+    // before any threads exist (std::env::set_var is process-global).
+    let config = crate::config::load_config();
+    for note in crate::platform::apply_launch_env(&config.launch) {
+        eprintln!("cmux: launch env: {note}");
+    }
+    let stripped = crate::platform::strip_child_env(&config.env.strip);
+    if !stripped.is_empty() {
+        eprintln!("cmux: stripped from child env: {}", stripped.join(", "));
+    }
+
     // Tokio runtime for socket I/O (kept alive for app lifetime).
     let runtime = tokio::runtime::Runtime::new()
         .expect("Failed to create tokio runtime");
@@ -172,9 +185,8 @@ fn main() {
         });
     }
 
-    // Load config once at startup (D-06). ShortcutMap must be built inside
-    // activate (after GTK init) because accelerator_parse requires GTK.
-    let config = crate::config::load_config();
+    // ShortcutMap must be built inside activate (after GTK init) because
+    // accelerator_parse requires GTK; config itself loaded at the top of main.
 
     // Move runtime_handle, cmd_tx, cmd_rx into the activate closure.
     // cmd_rx is wrapped in Mutex<Option<...>> so it can be taken once from a Fn closure.
@@ -300,13 +312,18 @@ fn build_ui(
         }
     }
 
-    // 3. Build the window layout
+    // 3. Build the window layout. Geometry from [window] config: TUI agents
+    // (pi, Gemini) break in panes under ~20 columns, so never start tiny —
+    // maximized by default, and a generous floor when not.
     let window = ApplicationWindow::builder()
         .application(app)
         .title("cmux")
-        .default_width(800)
-        .default_height(600)
+        .default_width(config.window.default_size[0].max(640))
+        .default_height(config.window.default_size[1].max(480))
         .build();
+    if config.window.start_maximized {
+        window.maximize();
+    }
 
     let (sidebar_box, _sidebar_scroll, sidebar_list) = crate::sidebar::build_sidebar();
     let stack = gtk4::Stack::new();

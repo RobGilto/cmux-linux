@@ -288,6 +288,9 @@ pub fn handle_socket_command(
                 "version": env!("CARGO_PKG_VERSION"),
                 "platform": "linux",
                 "socket_path": socket_path,
+                // What platform::apply_launch_env auto-configured at startup
+                // (e.g. GDK_DEBUG=gl-prefer-gl on NVIDIA). Empty = nothing.
+                "launch_env": crate::platform::applied_launch_env(),
             })));
         }
 
