@@ -68,10 +68,11 @@ require this binary to be on `$PATH` or under
 
 ```bash
 cmux launch        # find cmux-app, start it detached, wait for ping
+cmux quit          # graceful shutdown (socket quit → SIGTERM → SIGKILL)
 cmux doctor        # verify: socket, GL, config, session, agent CLIs, hooks
 ```
 
-`cmux launch` is idempotent (exits 0 if already running), passes `--fresh`
+`cmux launch` and `cmux quit` are idempotent (launch exits 0 if already running; quit exits 0 with `not running` if not), passes `--fresh`
 through to wipe the saved session, and logs the app's output to
 `$XDG_STATE_HOME/cmux/launch.log`. NVIDIA GL workarounds and child-shell env
 hygiene are applied **inside the binary** — no environment incantations.

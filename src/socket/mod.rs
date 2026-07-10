@@ -318,6 +318,10 @@ async fn dispatch_line(
             req_id: req_id.clone(),
             resp_tx,
         },
+        "system.quit" => commands::SocketCommand::Quit {
+            req_id: req_id.clone(),
+            resp_tx,
+        },
         "system.identify" => commands::SocketCommand::Identify {
             req_id: req_id.clone(),
             resp_tx,

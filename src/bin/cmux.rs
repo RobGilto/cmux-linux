@@ -5,7 +5,7 @@
 
 // The test target compiles this bin without invoking main(), which would
 // flag every CLI function as dead code under -D warnings.
-#![cfg_attr(test, allow(dead_code))]
+#![cfg_attr(test, allow(dead_code, clippy::unwrap_used, clippy::expect_used))]
 
 #[path = "../cli/mod.rs"]
 mod cli;

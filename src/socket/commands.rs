@@ -16,6 +16,11 @@ pub enum SocketCommand {
         req_id: Value,
         resp_tx: RespTx,
     },
+    /// Graceful app shutdown (the counterpart of `cmux launch`).
+    Quit {
+        req_id: Value,
+        resp_tx: RespTx,
+    },
     Capabilities {
         req_id: Value,
         resp_tx: RespTx,

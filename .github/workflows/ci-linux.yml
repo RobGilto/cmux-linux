@@ -95,7 +95,7 @@ jobs:
           -D warnings -D clippy::unwrap_used -D clippy::expect_used
 
       - name: Unit tests
-        run: cargo test --bin cmux-app
+        run: cargo test --bins
 
       - name: Release build
         run: cargo build --release --bin cmux-app --bin cmux
@@ -153,6 +153,8 @@ jobs:
           # Socket API subset: orchestration verbs work headlessly even if
           # llvmpipe rendering differs from the NVIDIA target.
           python3 tests_v2/test_orchestration_v3.py
+          # Quit test stops/starts the app — must run last.
+          python3 tests_v2/test_quit_verb.py
 
       - name: Upload app log on failure
         if: failure()

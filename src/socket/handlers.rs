@@ -288,6 +288,20 @@ pub fn handle_socket_command(cmd: SocketCommand, state: &crate::app_state::AppSt
             let _ = resp_tx.send(ok(req_id, json!({"pong": true})));
         }
 
+        SocketCommand::Quit { req_id, resp_tx } => {
+            // Ack before quitting so the CLI sees a reply instead of a
+            // dropped connection. app.quit() runs the normal GTK teardown
+            // (connect_shutdown → browser cleanup) and the session file
+            // already reflects the latest mutation (debounced save +
+            // panic-hook tee), matching a normal window close.
+            let _ = resp_tx.send(ok(req_id, json!({"quitting": true})));
+            let app = state.borrow().gtk_app.clone();
+            gtk4::glib::timeout_add_local_once(std::time::Duration::from_millis(150), move || {
+                tracing::info!("cmux: quit requested over socket");
+                app.quit();
+            });
+        }
+
         SocketCommand::Identify { req_id, resp_tx } => {
             let socket_path = crate::socket::socket_path().to_string_lossy().to_string();
             let _ = resp_tx.send(ok(

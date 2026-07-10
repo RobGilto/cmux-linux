@@ -9,6 +9,7 @@
 // Only the clap definitions are used here; the rest of the CLI module
 // is intentionally dead code in this binary.
 #![allow(dead_code)]
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 #[path = "../cli/mod.rs"]
 mod cli;

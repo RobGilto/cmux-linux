@@ -6,6 +6,7 @@
 pub mod discovery;
 pub mod doctor;
 pub mod format;
+pub mod quit;
 pub mod socket_client;
 
 pub use socket_client::CliError;
@@ -55,6 +56,10 @@ pub enum Commands {
         #[arg(long, env = "CMUX_APP")]
         app_path: Option<String>,
     },
+    /// Quit the running cmux-app gracefully (counterpart of launch).
+    /// Escalates: socket quit → SIGTERM → SIGKILL. Idempotent: exits 0
+    /// ("not running") when no instance exists.
+    Quit,
     /// Ping the running cmux instance
     Ping,
     /// Run self-service diagnostics (socket, GL, config, session, providers)
@@ -558,6 +563,10 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
     if let Commands::Doctor = cli.command {
         return doctor::run_doctor(&cli.socket, cli.json);
     }
+    // Quit must also work when the socket is dead (SIGTERM fallback).
+    if let Commands::Quit = cli.command {
+        return quit::run_quit(&cli.socket);
+    }
 
     // Resolve socket path: --socket flag > discovery > error
     let socket_path = if let Some(ref path) = cli.socket {
@@ -997,6 +1006,7 @@ fn command_to_rpc(cmd: &Commands) -> (&'static str, serde_json::Value) {
         Commands::Launch { .. } => unreachable!("launch handled in run()"),
         Commands::Ping => ("system.ping", json!({})),
         Commands::Doctor => unreachable!("doctor handled in run()"),
+        Commands::Quit => unreachable!("quit handled in run()"),
         Commands::WaitFor {
             name, signal: true, ..
         } => ("rendezvous.signal", json!({"name": name})),
