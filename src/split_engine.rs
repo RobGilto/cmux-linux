@@ -1637,6 +1637,8 @@ mod tests {
             surface_uuid: id,
             shell: "/bin/bash".to_string(),
             cwd: "/home/user".to_string(),
+            agent_provider: None,
+            agent_session_id: None,
         };
         if let SplitNodeData::Leaf { surface_uuid, pane_id, .. } = data {
             assert_eq!(surface_uuid, id);
@@ -1654,6 +1656,8 @@ mod tests {
             surface_uuid: Uuid::new_v4(),
             shell: "/bin/zsh".to_string(),
             cwd: "/tmp".to_string(),
+            agent_provider: None,
+            agent_session_id: None,
         };
         let json = serde_json::to_string(&leaf).expect("serialize failed");
         let restored: SplitNodeData = serde_json::from_str(&json).expect("deserialize failed");
@@ -1680,12 +1684,16 @@ mod tests {
                 surface_uuid: Uuid::new_v4(),
                 shell: String::new(),
                 cwd: String::new(),
+                agent_provider: None,
+                agent_session_id: None,
             }),
             end: Box::new(SplitNodeData::Leaf {
                 pane_id: 2,
                 surface_uuid: Uuid::new_v4(),
                 shell: String::new(),
                 cwd: String::new(),
+                agent_provider: None,
+                agent_session_id: None,
             }),
         };
         let json = serde_json::to_string(&split).expect("serialize failed");

@@ -39,6 +39,26 @@ pub fn save_session_atomic(data: &SessionData) -> std::io::Result<()> {
     save_session_to(data, &session_path())
 }
 
+/// Delete the saved session so the next launch starts clean (the `--fresh` flag).
+/// Removes both session.json and any leftover session.json.tmp. Missing files are
+/// not an error -- a wipe of nothing is still a successful wipe.
+pub fn wipe_session() -> std::io::Result<()> {
+    wipe_session_at(&session_path())
+}
+
+/// Internal: wipe a specific path (used in tests with temp paths).
+pub fn wipe_session_at(path: &Path) -> std::io::Result<()> {
+    let tmp_path = path.with_extension("json.tmp");
+    for p in [path, tmp_path.as_path()] {
+        match std::fs::remove_file(p) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
+
 /// Internal: save to a specific path (used in tests with temp paths).
 pub fn save_session_to(data: &SessionData, path: &Path) -> std::io::Result<()> {
     // Ensure parent directory exists.
@@ -105,6 +125,8 @@ mod tests {
                     surface_uuid: uuid::Uuid::nil(),
                     shell: "/bin/sh".to_string(),
                     cwd: "/tmp".to_string(),
+                    agent_provider: None,
+                    agent_session_id: None,
                 },
             }],
         }
@@ -170,5 +192,30 @@ mod tests {
         let path = std::path::PathBuf::from("/tmp/cmux-nonexistent-session-xyz.json");
         let result = load_session_from(&path);
         assert!(result.is_none(), "load_session_from must return None for missing file");
+    }
+
+    /// SESS-05: wipe_session_at removes session.json (+ .tmp) and load then returns None.
+    #[test]
+    fn test_wipe_removes_session() {
+        let dir = std::env::temp_dir().join(format!("cmux-test-wipe-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("session.json");
+        let tmp_path = path.with_extension("json.tmp");
+        let data = SessionData { version: 1, active_index: 0, workspaces: vec![] };
+        save_session_to(&data, &path).unwrap();
+        std::fs::write(&tmp_path, b"leftover").unwrap();
+
+        wipe_session_at(&path).expect("wipe failed");
+
+        assert!(!path.exists(), "session.json must be gone after wipe");
+        assert!(!tmp_path.exists(), "session.json.tmp must be gone after wipe");
+        assert!(load_session_from(&path).is_none(), "load after wipe must return None");
+    }
+
+    /// SESS-06: wiping a missing session is a no-op success (idempotent).
+    #[test]
+    fn test_wipe_missing_is_ok() {
+        let path = std::path::PathBuf::from("/tmp/cmux-nonexistent-wipe-xyz.json");
+        assert!(wipe_session_at(&path).is_ok(), "wipe of missing file must succeed");
     }
 }

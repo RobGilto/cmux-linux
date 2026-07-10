@@ -124,9 +124,22 @@ fn main() {
 
     eprintln!("cmux: GtkApplication created, connecting activate signal");
 
+    // `--fresh` (or CMUX_FRESH=1) wipes the saved session before it is read, so the
+    // app boots with a single clean workspace instead of restoring stale ones.
+    let fresh = std::env::args().any(|a| a == "--fresh")
+        || matches!(std::env::var("CMUX_FRESH").as_deref(), Ok("1") | Ok("true"));
+
     // Try to restore session from previous run (SESS-02, SESS-04).
     // load_session() returns None if file is missing or invalid -- that's fine.
-    let saved_session = crate::session::load_session();
+    let saved_session = if fresh {
+        match crate::session::wipe_session() {
+            Ok(()) => eprintln!("cmux: --fresh: wiped saved session, starting clean"),
+            Err(e) => eprintln!("cmux: --fresh: could not wipe session: {e}"),
+        }
+        None
+    } else {
+        crate::session::load_session()
+    };
     if let Some(ref s) = saved_session {
         eprintln!("cmux: restoring session ({} workspace(s))", s.workspaces.len());
     }
@@ -180,7 +193,9 @@ fn main() {
     });
 
     eprintln!("cmux: calling app.run()");
-    let _exit_code = app.run();
+    // Filter out cmux-only flags so GTK doesn't reject them as unknown options.
+    let gtk_args: Vec<String> = std::env::args().filter(|a| a != "--fresh").collect();
+    let _exit_code = app.run_with_args(&gtk_args);
     eprintln!("cmux: app.run() returned");
 
     // Runtime drops here — tokio tasks are cancelled.
@@ -204,7 +219,10 @@ fn build_ui(
         use crate::ghostty::callbacks::APP_PTR;
         use std::sync::atomic::Ordering;
 
-        let argv: Vec<CString> = std::env::args().map(|a| CString::new(a).unwrap()).collect();
+        let argv: Vec<CString> = std::env::args()
+            .filter(|a| a != "--fresh")
+            .map(|a| CString::new(a).unwrap())
+            .collect();
         let mut ptrs: Vec<*mut i8> = argv.iter().map(|a| a.as_ptr() as *mut i8).collect();
         ffi::ghostty_init(ptrs.len(), ptrs.as_mut_ptr());
 
