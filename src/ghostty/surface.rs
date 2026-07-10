@@ -372,10 +372,7 @@ pub fn create_surface(
             }
 
             if let Some(surface) = cell_unrealize.borrow_mut().take() {
-                tracing::debug!(
-                    "cmux: freeing ghostty surface {:p} on unrealize",
-                    surface,
-                );
+                tracing::debug!("cmux: freeing ghostty surface {:p} on unrealize", surface,);
                 if let Ok(mut registry) = callbacks::SURFACE_REGISTRY.lock() {
                     registry.remove(&(surface as usize));
                 }
@@ -445,7 +442,9 @@ pub fn create_surface(
                     ffi::ghostty_surface_draw(surface);
                 }
             } else {
-                tracing::debug!("cmux: render callback — surface not yet initialized, skipping draw");
+                tracing::debug!(
+                    "cmux: render callback — surface not yet initialized, skipping draw"
+                );
             }
             gtk4::glib::Propagation::Stop // suppress GTK default render
         }
@@ -519,11 +518,16 @@ pub fn create_surface(
             if let Some(surface) = *cell.borrow() {
                 // Prefer fractional scale from GdkSurface (Wayland fractional scaling)
                 // over Widget::scale_factor() which returns the integer ceiling.
-                let scale = widget.native()
+                let scale = widget
+                    .native()
                     .and_then(|n| n.surface())
                     .map(|s| s.scale())
                     .unwrap_or(widget.scale_factor() as f64);
-                tracing::debug!("cmux: scale-factor changed to {} for surface {:p}", scale, surface);
+                tracing::debug!(
+                    "cmux: scale-factor changed to {} for surface {:p}",
+                    scale,
+                    surface
+                );
                 unsafe {
                     ffi::ghostty_surface_set_content_scale(surface, scale, scale);
                     ffi::ghostty_surface_refresh(surface); // trigger redraw at new scale

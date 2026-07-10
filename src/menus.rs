@@ -1,5 +1,5 @@
-use gtk4::prelude::*;
 use gtk4::gio;
+use gtk4::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -231,7 +231,10 @@ pub fn register_actions(
             let _ = std::fs::create_dir_all(parent);
         }
         if !config_path.exists() {
-            let _ = std::fs::write(&config_path, "# cmux configuration\n# See documentation for options\n");
+            let _ = std::fs::write(
+                &config_path,
+                "# cmux configuration\n# See documentation for options\n",
+            );
         }
         let _ = std::process::Command::new(&editor)
             .arg(&config_path)
@@ -392,7 +395,10 @@ pub fn build_hamburger_menu() -> gio::Menu {
     edit_section.append(Some("Paste"), Some("win.paste"));
     edit_section.append(Some("Find"), Some("win.find"));
     edit_section.append(Some("Browser Settings…"), Some("win.browser-settings"));
-    edit_section.append(Some("Download Bundled Chromium…"), Some("win.download-chromium"));
+    edit_section.append(
+        Some("Download Bundled Chromium…"),
+        Some("win.download-chromium"),
+    );
     edit_section.append(Some("Preferences"), Some("win.preferences"));
     menu.append_section(Some("Edit"), &edit_section);
 
@@ -447,7 +453,10 @@ pub fn build_terminal_context_menu() -> gio::Menu {
 /// Includes Open in External Browser and Copy URL actions.
 pub fn build_browser_context_menu() -> gio::Menu {
     let menu = gio::Menu::new();
-    menu.append(Some("Open in External Browser"), Some("win.open-external-browser"));
+    menu.append(
+        Some("Open in External Browser"),
+        Some("win.open-external-browser"),
+    );
     menu.append(Some("Copy URL"), Some("win.copy-url"));
     menu.append(Some("Close Pane"), Some("win.close-pane"));
     menu
@@ -464,9 +473,7 @@ fn build_shortcuts_window() -> gtk4::ShortcutsWindow {
         .title("Workspaces")
         .build();
 
-    let ws_group = gtk4::ShortcutsGroup::builder()
-        .title("Workspaces")
-        .build();
+    let ws_group = gtk4::ShortcutsGroup::builder().title("Workspaces").build();
     ws_group.add_shortcut(&shortcut("<Ctrl>n", "New Workspace"));
     ws_group.add_shortcut(&shortcut("<Ctrl><Shift>w", "Close Workspace"));
     ws_group.add_shortcut(&shortcut("<Ctrl>bracketright", "Next Workspace"));
@@ -482,9 +489,7 @@ fn build_shortcuts_window() -> gtk4::ShortcutsWindow {
         .title("Panes")
         .build();
 
-    let pane_group = gtk4::ShortcutsGroup::builder()
-        .title("Panes")
-        .build();
+    let pane_group = gtk4::ShortcutsGroup::builder().title("Panes").build();
     pane_group.add_shortcut(&shortcut("<Ctrl>d", "Split Right"));
     pane_group.add_shortcut(&shortcut("<Ctrl><Shift>d", "Split Down"));
     pane_group.add_shortcut(&shortcut("<Ctrl><Shift>x", "Close Pane"));
@@ -501,9 +506,7 @@ fn build_shortcuts_window() -> gtk4::ShortcutsWindow {
         .title("Edit")
         .build();
 
-    let edit_group = gtk4::ShortcutsGroup::builder()
-        .title("Edit")
-        .build();
+    let edit_group = gtk4::ShortcutsGroup::builder().title("Edit").build();
     edit_group.add_shortcut(&shortcut("<Ctrl><Shift>c", "Copy"));
     edit_group.add_shortcut(&shortcut("<Ctrl><Shift>v", "Paste"));
     edit_group.add_shortcut(&shortcut("<Ctrl>f", "Find"));
@@ -516,9 +519,7 @@ fn build_shortcuts_window() -> gtk4::ShortcutsWindow {
         .title("View")
         .build();
 
-    let view_group = gtk4::ShortcutsGroup::builder()
-        .title("View")
-        .build();
+    let view_group = gtk4::ShortcutsGroup::builder().title("View").build();
     view_group.add_shortcut(&shortcut("<Ctrl>b", "Toggle Sidebar"));
     view_group.add_shortcut(&shortcut("<Ctrl><Shift>b", "Open Browser"));
     view_group.add_shortcut(&shortcut("<Ctrl><Shift>s", "New SSH Workspace"));
@@ -531,9 +532,7 @@ fn build_shortcuts_window() -> gtk4::ShortcutsWindow {
         .title("General")
         .build();
 
-    let general_group = gtk4::ShortcutsGroup::builder()
-        .title("General")
-        .build();
+    let general_group = gtk4::ShortcutsGroup::builder().title("General").build();
     general_group.add_shortcut(&shortcut("<Ctrl>q", "Quit"));
     general_section.add_group(&general_group);
     window.add_section(&general_section);

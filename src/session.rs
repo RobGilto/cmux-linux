@@ -45,8 +45,7 @@ pub fn save_session_atomic(data: &SessionData) -> std::io::Result<()> {
 /// Most recent snapshot produced by AppState::trigger_session_save, kept for
 /// the panic hook: the debounce task may not have flushed it to disk yet
 /// when the process dies.
-static LAST_SNAPSHOT: std::sync::Mutex<Option<SessionData>> =
-    std::sync::Mutex::new(None);
+static LAST_SNAPSHOT: std::sync::Mutex<Option<SessionData>> = std::sync::Mutex::new(None);
 
 /// Record the latest snapshot (called on the GTK main thread on every
 /// session mutation, before the debounced disk write).
@@ -123,7 +122,10 @@ pub fn load_session_from(path: &Path) -> Option<SessionData> {
     match serde_json::from_str::<SessionData>(&content) {
         Ok(data) => {
             if data.version != 1 && data.version != 2 {
-                tracing::debug!("cmux: session version {} not supported, ignoring", data.version);
+                tracing::debug!(
+                    "cmux: session version {} not supported, ignoring",
+                    data.version
+                );
                 return None;
             }
             Some(data)
@@ -172,11 +174,14 @@ mod tests {
         let result = save_session_to(&data, &path);
         assert!(result.is_ok(), "save_session_to failed: {:?}", result);
         // The file must exist on disk -- not just Ok(()), but actually written.
-        assert!(path.exists(), "session.json not created on disk after save_session_to");
+        assert!(
+            path.exists(),
+            "session.json not created on disk after save_session_to"
+        );
         // The content must be valid JSON with the correct workspace name.
         let content = std::fs::read_to_string(&path).expect("could not read session.json");
-        let parsed: SessionData = serde_json::from_str(&content)
-            .expect("session.json is not valid JSON");
+        let parsed: SessionData =
+            serde_json::from_str(&content).expect("session.json is not valid JSON");
         assert_eq!(parsed.workspaces[0].name, "TestWorkspace");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -211,7 +216,10 @@ mod tests {
 
         // After successful save: session.json exists, .tmp must be gone (renamed).
         assert!(path.exists(), "session.json must exist after save");
-        assert!(!tmp_path.exists(), "session.json.tmp must be gone after successful rename");
+        assert!(
+            !tmp_path.exists(),
+            "session.json.tmp must be gone after successful rename"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -220,7 +228,10 @@ mod tests {
     fn test_graceful_fallback() {
         let path = std::path::PathBuf::from("/tmp/cmux-nonexistent-session-xyz.json");
         let result = load_session_from(&path);
-        assert!(result.is_none(), "load_session_from must return None for missing file");
+        assert!(
+            result.is_none(),
+            "load_session_from must return None for missing file"
+        );
     }
 
     /// SESS-05: wipe_session_at removes session.json (+ .tmp) and load then returns None.
@@ -230,21 +241,34 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("session.json");
         let tmp_path = path.with_extension("json.tmp");
-        let data = SessionData { version: 1, active_index: 0, workspaces: vec![] };
+        let data = SessionData {
+            version: 1,
+            active_index: 0,
+            workspaces: vec![],
+        };
         save_session_to(&data, &path).unwrap();
         std::fs::write(&tmp_path, b"leftover").unwrap();
 
         wipe_session_at(&path).expect("wipe failed");
 
         assert!(!path.exists(), "session.json must be gone after wipe");
-        assert!(!tmp_path.exists(), "session.json.tmp must be gone after wipe");
-        assert!(load_session_from(&path).is_none(), "load after wipe must return None");
+        assert!(
+            !tmp_path.exists(),
+            "session.json.tmp must be gone after wipe"
+        );
+        assert!(
+            load_session_from(&path).is_none(),
+            "load after wipe must return None"
+        );
     }
 
     /// SESS-06: wiping a missing session is a no-op success (idempotent).
     #[test]
     fn test_wipe_missing_is_ok() {
         let path = std::path::PathBuf::from("/tmp/cmux-nonexistent-wipe-xyz.json");
-        assert!(wipe_session_at(&path).is_ok(), "wipe of missing file must succeed");
+        assert!(
+            wipe_session_at(&path).is_ok(),
+            "wipe of missing file must succeed"
+        );
     }
 }

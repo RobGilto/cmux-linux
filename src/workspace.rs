@@ -117,7 +117,11 @@ mod tests {
     fn workspace_new_has_uuid() {
         let w = Workspace::new(1, 1);
         // uuid must not be nil (all-zeros)
-        assert_ne!(w.uuid, Uuid::nil(), "Workspace::new() must generate a non-nil UUID");
+        assert_ne!(
+            w.uuid,
+            Uuid::nil(),
+            "Workspace::new() must generate a non-nil UUID"
+        );
     }
 
     #[test]

@@ -53,8 +53,12 @@ impl Provider {
     }
 
     /// All known providers, for agent-sessions listings and doctor checks.
-    pub const ALL: [Provider; 4] =
-        [Provider::Claude, Provider::Codex, Provider::Gemini, Provider::Pi];
+    pub const ALL: [Provider; 4] = [
+        Provider::Claude,
+        Provider::Codex,
+        Provider::Gemini,
+        Provider::Pi,
+    ];
 
     /// Whether a captured/implicit session can be resumed after restart.
     pub fn resumable(self) -> bool {
@@ -104,7 +108,11 @@ pub fn register(
     if let Ok(mut m) = AGENT_SESSIONS.lock() {
         m.insert(
             surface_uuid.to_string(),
-            AgentSession { provider, session_id, cwd },
+            AgentSession {
+                provider,
+                session_id,
+                cwd,
+            },
         );
     }
 }
@@ -157,7 +165,9 @@ pub fn startup_command(surface_uuid: &str, session: &AgentSession) -> String {
     let launch = format!(
         "export CMUX_PANE={}; {}",
         surface_uuid,
-        session.provider.launch_command(session.session_id.as_deref())
+        session
+            .provider
+            .launch_command(session.session_id.as_deref())
     );
     match session.cwd.as_deref().filter(|c| !c.is_empty()) {
         Some(cwd) => format!("cd '{}'; {}", cwd, launch),
@@ -175,13 +185,12 @@ pub fn install_hooks() -> Result<Vec<String>, String> {
     let path = dir.join("settings.json");
 
     let mut root: serde_json::Value = if path.exists() {
-        let text = std::fs::read_to_string(&path)
-            .map_err(|e| format!("read {}: {e}", path.display()))?;
+        let text =
+            std::fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
         if text.trim().is_empty() {
             serde_json::json!({})
         } else {
-            serde_json::from_str(&text)
-                .map_err(|e| format!("parse {}: {e}", path.display()))?
+            serde_json::from_str(&text).map_err(|e| format!("parse {}: {e}", path.display()))?
         }
     } else {
         serde_json::json!({})
@@ -193,16 +202,14 @@ pub fn install_hooks() -> Result<Vec<String>, String> {
     let Some(obj) = root.as_object_mut() else {
         return Err("~/.claude/settings.json is not a JSON object".into());
     };
-    let hooks = obj
-        .entry("hooks")
-        .or_insert_with(|| serde_json::json!({}));
-    let hooks_obj = hooks
-        .as_object_mut()
-        .ok_or("hooks is not an object")?;
+    let hooks = obj.entry("hooks").or_insert_with(|| serde_json::json!({}));
+    let hooks_obj = hooks.as_object_mut().ok_or("hooks is not an object")?;
     let starts = hooks_obj
         .entry("SessionStart")
         .or_insert_with(|| serde_json::json!([]));
-    let arr = starts.as_array_mut().ok_or("SessionStart is not an array")?;
+    let arr = starts
+        .as_array_mut()
+        .ok_or("SessionStart is not an array")?;
 
     // Already installed? Look for our command anywhere in the matcher groups.
     let already = arr.iter().any(|group| {
@@ -226,10 +233,9 @@ pub fn install_hooks() -> Result<Vec<String>, String> {
                 {"type": "command", "command": "cmux agent report-session"}
             ]
         }));
-        let pretty = serde_json::to_string_pretty(&root)
-            .map_err(|e| format!("serialize settings: {e}"))?;
-        std::fs::write(&path, pretty)
-            .map_err(|e| format!("write {}: {e}", path.display()))?;
+        let pretty =
+            serde_json::to_string_pretty(&root).map_err(|e| format!("serialize settings: {e}"))?;
+        std::fs::write(&path, pretty).map_err(|e| format!("write {}: {e}", path.display()))?;
     }
 
     Ok(vec!["claude".to_string()])

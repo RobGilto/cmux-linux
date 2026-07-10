@@ -1,6 +1,6 @@
+use crate::app_state::AppState;
 #[allow(deprecated)]
 use gtk4::prelude::*;
-use crate::app_state::AppState;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -92,14 +92,23 @@ pub fn show_ssh_dialog(app: &gtk4::Application, state: Rc<RefCell<AppState>>) {
 fn trigger_ssh_connect(state: &Rc<RefCell<AppState>>, target: String) {
     let (write_tx, write_rx) = tokio::sync::mpsc::unbounded_channel();
     let (output_tx, _output_rx) = tokio::sync::mpsc::unbounded_channel();
-    let bridge = std::sync::Arc::new(crate::ssh::bridge::SshBridge::new(write_tx, write_rx, output_tx));
-    let id = state.borrow_mut().create_remote_workspace(target.clone(), &bridge);
-    state.borrow_mut().workspace_bridges.insert(id, bridge.clone());
+    let bridge = std::sync::Arc::new(crate::ssh::bridge::SshBridge::new(
+        write_tx, write_rx, output_tx,
+    ));
+    let id = state
+        .borrow_mut()
+        .create_remote_workspace(target.clone(), &bridge);
+    state
+        .borrow_mut()
+        .workspace_bridges
+        .insert(id, bridge.clone());
 
     let ssh_tx = state.borrow().ssh_event_tx.clone();
     let rt_handle = state.borrow().runtime_handle.clone();
     if let (Some(tx), Some(rt)) = (ssh_tx, rt_handle) {
-        let handle = rt.spawn(crate::ssh::tunnel::run_ssh_lifecycle(id, target, tx, bridge));
+        let handle = rt.spawn(crate::ssh::tunnel::run_ssh_lifecycle(
+            id, target, tx, bridge,
+        ));
         state.borrow_mut().ssh_task_handles.insert(id, handle);
     }
 }

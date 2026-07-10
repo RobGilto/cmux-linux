@@ -82,7 +82,10 @@ impl SshBridge {
 
     /// Clone the current write sender (for IoWriteContext creation).
     pub fn clone_write_tx(&self) -> mpsc::UnboundedSender<WriteRequest> {
-        self.write_tx.lock().unwrap_or_else(|p| p.into_inner()).clone()
+        self.write_tx
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
     }
 
     /// Register a new pane with its stream_id after proxy.open succeeds.
@@ -106,10 +109,13 @@ impl SshBridge {
     /// and open a remote stream for it after SSH handshake.
     pub fn register_pane_placeholder(&self, pane_id: u64) {
         if let Ok(mut streams) = self.streams.lock() {
-            streams.insert(pane_id, PaneStream {
-                stream_id: String::new(),
-                subscribed: false,
-            });
+            streams.insert(
+                pane_id,
+                PaneStream {
+                    stream_id: String::new(),
+                    subscribed: false,
+                },
+            );
         }
     }
 

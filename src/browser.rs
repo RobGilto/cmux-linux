@@ -1,10 +1,10 @@
-use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
-use serde_json::Value;
 use base64::Engine as _;
 use futures_util::StreamExt;
 use gtk4::prelude::*;
+use serde_json::Value;
+use std::io::{BufRead, BufReader, Write};
+use std::path::PathBuf;
+use std::process::{Child, Command, Stdio};
 use uuid::Uuid;
 
 /// Session name for the agent-browser daemon (one daemon per cmux instance).
@@ -125,8 +125,13 @@ impl BrowserManager {
         })?;
 
         let socket_dir = Self::agent_browser_socket_dir();
-        std::fs::create_dir_all(&socket_dir)
-            .map_err(|e| format!("Failed to create socket dir {}: {}", socket_dir.display(), e))?;
+        std::fs::create_dir_all(&socket_dir).map_err(|e| {
+            format!(
+                "Failed to create socket dir {}: {}",
+                socket_dir.display(),
+                e
+            )
+        })?;
 
         let mut cmd = Command::new(&binary_path);
         cmd.env("AGENT_BROWSER_DAEMON", "1")
@@ -189,8 +194,7 @@ impl BrowserManager {
             .read_line(&mut line)
             .map_err(|e| format!("Failed to read response: {}", e))?;
 
-        serde_json::from_str(&line)
-            .map_err(|e| format!("Failed to parse response: {}", e))
+        serde_json::from_str(&line).map_err(|e| format!("Failed to parse response: {}", e))
     }
 
     /// Read the stream port from the port file.
@@ -227,7 +231,11 @@ impl BrowserManager {
             // BrowserManager's owned send_command is back on the main
             // thread already. send_command_to runs on whatever thread it
             // is called from.
-            let _ = send_command_to(&socket_path, "close", serde_json::json!({"id": "cmux-shutdown"}));
+            let _ = send_command_to(
+                &socket_path,
+                "close",
+                serde_json::json!({"id": "cmux-shutdown"}),
+            );
 
             if let Some(ref mut child) = child {
                 let start = std::time::Instant::now();
@@ -286,7 +294,9 @@ impl BrowserManager {
                     if let Ok(frame) = serde_json::from_str::<serde_json::Value>(text) {
                         if frame.get("type").and_then(|t| t.as_str()) == Some("frame") {
                             if let Some(data_b64) = frame.get("data").and_then(|d| d.as_str()) {
-                                if let Ok(jpeg_bytes) = base64::engine::general_purpose::STANDARD.decode(data_b64) {
+                                if let Ok(jpeg_bytes) =
+                                    base64::engine::general_purpose::STANDARD.decode(data_b64)
+                                {
                                     let _ = frame_tx.send(jpeg_bytes);
                                 }
                             }
@@ -315,7 +325,10 @@ impl BrowserManager {
                         // Hide the "No browser preview" overlay label on first frame
                         if first_frame {
                             first_frame = false;
-                            if let Some(overlay) = picture_clone.parent().and_then(|p| p.downcast::<gtk4::Overlay>().ok()) {
+                            if let Some(overlay) = picture_clone
+                                .parent()
+                                .and_then(|p| p.downcast::<gtk4::Overlay>().ok())
+                            {
                                 if let Some(child) = overlay.first_child() {
                                     let mut sibling = child.next_sibling();
                                     while let Some(widget) = sibling {
@@ -508,7 +521,8 @@ pub fn spawn_motion_forwarder(
                     msg.push('\n');
                     let _ = stream.write_all(msg.as_bytes());
                 }
-            }).await;
+            })
+            .await;
         }
     });
     tx
@@ -686,8 +700,7 @@ pub fn send_command_to(
         .read_line(&mut line)
         .map_err(|e| format!("Failed to read response: {}", e))?;
 
-    serde_json::from_str(&line)
-        .map_err(|e| format!("Failed to parse response: {}", e))
+    serde_json::from_str(&line).map_err(|e| format!("Failed to parse response: {}", e))
 }
 
 /// Blocking daemon-ready poll plus the four initial commands cmux runs
@@ -710,11 +723,7 @@ pub fn bootstrap_daemon_blocking(socket_path: &std::path::Path) -> Result<(), St
     // so this is the part that costs seconds — exactly why we run it off the
     // GTK main thread.
     let _ = send_command_to(socket_path, "stream_enable", serde_json::json!({}));
-    let _ = send_command_to(
-        socket_path,
-        "launch",
-        serde_json::json!({"headless": true}),
-    );
+    let _ = send_command_to(socket_path, "launch", serde_json::json!({"headless": true}));
     send_command_to(
         socket_path,
         "navigate",

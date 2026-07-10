@@ -12,12 +12,18 @@ fn main() {
     // The file is emitted without the standard `lib` prefix, so pass the full
     // path to the linker rather than relying on the -lNAME search convention.
     println!("cargo:rustc-link-search=native={}", ghostty_lib_path);
-    println!("cargo:rustc-link-arg={}/ghostty-internal.a", ghostty_lib_path);
+    println!(
+        "cargo:rustc-link-arg={}/ghostty-internal.a",
+        ghostty_lib_path
+    );
     // Rebuild when the archive itself changes — e.g. after a `zig build`
     // inside ghostty/. Without this, cargo will reuse the previously linked
     // binary even after the archive is regenerated, silently shipping stale
     // ghostty symbols.
-    println!("cargo:rerun-if-changed={}/ghostty-internal.a", ghostty_lib_path);
+    println!(
+        "cargo:rerun-if-changed={}/ghostty-internal.a",
+        ghostty_lib_path
+    );
 
     // Note: ghostty-internal.a is a CombinedArchive that already bundles
     // simdutf.o and libhighway.a. The fork's earlier build.rs linked them

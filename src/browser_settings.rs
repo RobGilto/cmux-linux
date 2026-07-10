@@ -193,10 +193,7 @@ fn persist_chromium_path(new_value: Option<&str>) -> std::io::Result<()> {
             return;
         }
         if let Some(value) = new_value {
-            out.push_str(&format!(
-                "chromium_path = \"{}\"\n",
-                escape_toml(value)
-            ));
+            out.push_str(&format!("chromium_path = \"{}\"\n", escape_toml(value)));
             *wrote = true;
         }
     };

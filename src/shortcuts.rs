@@ -101,13 +101,17 @@ pub fn install_shortcuts(
                     gtk4::glib::Propagation::Stop
                 }
                 // -- Workspace number shortcuts --
-                Some(action @ (
-                    ShortcutAction::Workspace1 | ShortcutAction::Workspace2 |
-                    ShortcutAction::Workspace3 | ShortcutAction::Workspace4 |
-                    ShortcutAction::Workspace5 | ShortcutAction::Workspace6 |
-                    ShortcutAction::Workspace7 | ShortcutAction::Workspace8 |
-                    ShortcutAction::Workspace9
-                )) => {
+                Some(
+                    action @ (ShortcutAction::Workspace1
+                    | ShortcutAction::Workspace2
+                    | ShortcutAction::Workspace3
+                    | ShortcutAction::Workspace4
+                    | ShortcutAction::Workspace5
+                    | ShortcutAction::Workspace6
+                    | ShortcutAction::Workspace7
+                    | ShortcutAction::Workspace8
+                    | ShortcutAction::Workspace9),
+                ) => {
                     let idx = match action {
                         ShortcutAction::Workspace1 => 0,
                         ShortcutAction::Workspace2 => 1,
@@ -325,10 +329,7 @@ pub fn handle_browser_open(state: &Rc<RefCell<AppState>>) {
 /// Wire the streaming WebSocket, the nav buttons, and the mouse/keyboard/scroll
 /// controllers for an already-spawned preview pane. Called from the
 /// `handle_browser_open` continuation once `bootstrap_daemon_blocking` succeeds.
-fn wire_browser_pane(
-    state: &Rc<RefCell<AppState>>,
-    widgets: crate::browser::PreviewPaneWidgets,
-) {
+fn wire_browser_pane(state: &Rc<RefCell<AppState>>, widgets: crate::browser::PreviewPaneWidgets) {
     let picture = widgets.picture.clone();
     let url_entry = widgets.url_entry.clone();
     let picture_ref = picture.clone();
@@ -390,9 +391,7 @@ fn wire_browser_pane(
         if let Some(rt) = runtime {
             rt.spawn_blocking(move || {
                 for (action, params) in steps {
-                    if let Err(e) =
-                        crate::browser::send_command_to(&socket_path, action, params)
-                    {
+                    if let Err(e) = crate::browser::send_command_to(&socket_path, action, params) {
                         tracing::warn!("cmux: nav {action} failed: {e}");
                         // Bail on first failure — later commands likely
                         // depended on the earlier one (viewport before
@@ -452,16 +451,17 @@ fn wire_browser_pane(
             if raw_url.is_empty() {
                 return;
             }
-            let url = if raw_url.contains("://") { raw_url } else { format!("https://{raw_url}") };
+            let url = if raw_url.contains("://") {
+                raw_url
+            } else {
+                format!("https://{raw_url}")
+            };
             url_entry_for_go.set_text(&url);
             let w = picture_for_go.width();
             let h = picture_for_go.height();
             let mut steps: Vec<(&'static str, serde_json::Value)> = Vec::new();
             if w > 0 && h > 0 {
-                steps.push((
-                    "viewport",
-                    serde_json::json!({"width": w, "height": h}),
-                ));
+                steps.push(("viewport", serde_json::json!({"width": w, "height": h})));
             }
             steps.push(("navigate", serde_json::json!({"url": url})));
             dispatch_nav_seq(runtime_for_go.as_ref(), socket_for_go.clone(), steps);
@@ -474,9 +474,10 @@ fn wire_browser_pane(
         let runtime = s.runtime_handle.clone();
         let bm = s.browser_manager.as_ref();
         match (runtime, bm) {
-            (Some(rt), Some(bm)) => {
-                Some(crate::browser::spawn_motion_forwarder(&rt, bm.daemon_socket_path()))
-            }
+            (Some(rt), Some(bm)) => Some(crate::browser::spawn_motion_forwarder(
+                &rt,
+                bm.daemon_socket_path(),
+            )),
             _ => None,
         }
     };
@@ -508,8 +509,8 @@ fn wire_browser_pane(
         let runtime_for_click = runtime_handle.clone();
         click_ctrl.connect_released(move |_gesture, _n_press, x, y| {
             // D-09: Grab focus on the container so keyboard events resume flowing to Chrome
-            if let Some(parent_box) = picture_for_click.parent()
-                .and_then(|o| o.parent()) // overlay -> container box
+            if let Some(parent_box) = picture_for_click.parent().and_then(|o| o.parent())
+            // overlay -> container box
             {
                 parent_box.grab_focus();
             }
@@ -622,11 +623,12 @@ fn wire_browser_pane(
             if key_str.is_empty() {
                 return gtk4::glib::Propagation::Proceed;
             }
-            let text = if key_str.len() == 1 && !mods.contains(gtk4::gdk::ModifierType::CONTROL_MASK) {
-                key_str.clone()
-            } else {
-                String::new()
-            };
+            let text =
+                if key_str.len() == 1 && !mods.contains(gtk4::gdk::ModifierType::CONTROL_MASK) {
+                    key_str.clone()
+                } else {
+                    String::new()
+                };
             let modifiers = cdp_modifiers(mods);
             let mut params = serde_json::json!({
                 "type": "keyDown", "key": key_str, "code": code_str,
@@ -663,8 +665,8 @@ fn wire_browser_pane(
             }
         });
         // Attach to container (the focusable Box) so it receives key events when preview is focused
-        if let Some(parent_box) = picture_ref.parent()
-            .and_then(|o| o.parent()) // overlay -> container box
+        if let Some(parent_box) = picture_ref.parent().and_then(|o| o.parent())
+        // overlay -> container box
         {
             parent_box.set_focusable(true);
             parent_box.add_controller(key_ctrl);
@@ -726,9 +728,7 @@ fn wire_browser_pane(
                     Ok(result) => {
                         if let Some(text) = result.get("data").and_then(|d| d.as_str()) {
                             text.to_string()
-                        } else if let Some(text) =
-                            result.get("result").and_then(|d| d.as_str())
-                        {
+                        } else if let Some(text) = result.get("result").and_then(|d| d.as_str()) {
                             text.to_string()
                         } else {
                             serde_json::to_string_pretty(&result).unwrap_or_default()
@@ -763,7 +763,10 @@ fn wire_browser_pane(
             });
         } else {
             // Remove the DevTools overlay
-            if let Some(overlay) = picture_for_devtools.parent().and_then(|p| p.downcast::<gtk4::Overlay>().ok()) {
+            if let Some(overlay) = picture_for_devtools
+                .parent()
+                .and_then(|p| p.downcast::<gtk4::Overlay>().ok())
+            {
                 if let Some(child) = overlay.first_child() {
                     let mut current = Some(child);
                     while let Some(widget) = current {
@@ -833,9 +836,15 @@ fn gdk_keyval_to_cdp(keyval: gtk4::gdk::Key) -> (String, String) {
 /// CDP: Alt=1, Ctrl=2, Meta=4, Shift=8
 fn cdp_modifiers(mods: gtk4::gdk::ModifierType) -> i32 {
     let mut m = 0;
-    if mods.contains(gtk4::gdk::ModifierType::ALT_MASK) { m |= 1; }
-    if mods.contains(gtk4::gdk::ModifierType::CONTROL_MASK) { m |= 2; }
-    if mods.contains(gtk4::gdk::ModifierType::SHIFT_MASK) { m |= 8; }
+    if mods.contains(gtk4::gdk::ModifierType::ALT_MASK) {
+        m |= 1;
+    }
+    if mods.contains(gtk4::gdk::ModifierType::CONTROL_MASK) {
+        m |= 2;
+    }
+    if mods.contains(gtk4::gdk::ModifierType::SHIFT_MASK) {
+        m |= 8;
+    }
     m
 }
 

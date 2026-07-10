@@ -1,7 +1,7 @@
-use base64::Engine;
 use crate::ssh::bridge::{SshBridge, WriteRequest};
 use crate::ssh::{SshEvent, SshEventTx};
 use crate::workspace::ConnectionState;
+use base64::Engine;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -87,7 +87,8 @@ pub async fn run_ssh_lifecycle(
                 if was_reconnect {
                     if let Ok(streams) = bridge.streams.lock() {
                         for (&pane_id, _) in streams.iter() {
-                            let msg = b"\r\n\x1b[32m[Reconnected \xe2\x80\x94 new session]\x1b[0m\r\n";
+                            let msg =
+                                b"\r\n\x1b[32m[Reconnected \xe2\x80\x94 new session]\x1b[0m\r\n";
                             let _ = ssh_tx.send(SshEvent::RemoteOutput {
                                 pane_id,
                                 data: msg.to_vec(),
@@ -120,7 +121,8 @@ pub async fn run_ssh_lifecycle(
                     let mut buf_writer = BufWriter::new(writer);
 
                     // Send hello/handshake to verify cmuxd-remote is running
-                    let hello = serde_json::json!({"jsonrpc":"2.0","id":1,"method":"hello","params":{}});
+                    let hello =
+                        serde_json::json!({"jsonrpc":"2.0","id":1,"method":"hello","params":{}});
                     let hello_line = format!("{}\n", hello);
                     if let Err(e) = buf_writer.write_all(hello_line.as_bytes()).await {
                         tracing::warn!("cmux: SSH handshake write failed: {e}");
@@ -128,13 +130,7 @@ pub async fn run_ssh_lifecycle(
                         tracing::warn!("cmux: SSH handshake flush failed: {e}");
                     } else {
                         // Run bidirectional proxy routing
-                        run_proxy_routing(
-                            buf_writer,
-                            reader,
-                            &bridge,
-                            &ssh_tx,
-                        )
-                        .await;
+                        run_proxy_routing(buf_writer, reader, &bridge, &ssh_tx).await;
                     }
                 }
 
@@ -168,7 +164,9 @@ pub async fn run_ssh_lifecycle(
         }
 
         if attempt >= MAX_RETRIES {
-            tracing::debug!("cmux: SSH max retries ({MAX_RETRIES}) exceeded for {target}, giving up");
+            tracing::debug!(
+                "cmux: SSH max retries ({MAX_RETRIES}) exceeded for {target}, giving up"
+            );
             let _ = ssh_tx.send(SshEvent::StateChanged {
                 workspace_id,
                 state: ConnectionState::Disconnected,
@@ -231,7 +229,9 @@ async fn run_proxy_routing(
 
     // Open remote streams for all registered panes (reader is running to receive responses)
     {
-        let pane_ids: Vec<u64> = bridge.streams.lock()
+        let pane_ids: Vec<u64> = bridge
+            .streams
+            .lock()
             .map(|s| s.keys().copied().collect())
             .unwrap_or_default();
         for pane_id in pane_ids {
@@ -287,10 +287,7 @@ fn handle_incoming_message(
 ) {
     // Check if it's an async event (has "event" field)
     if let Some(event_name) = msg.get("event").and_then(|v| v.as_str()) {
-        let stream_id = msg
-            .get("stream_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let stream_id = msg.get("stream_id").and_then(|v| v.as_str()).unwrap_or("");
 
         match event_name {
             "proxy.stream.data" => {

@@ -25,9 +25,7 @@ fn resolve_surface_ref(
             if let Some(uuid) = refs.get(&n) {
                 return Ok(uuid.clone());
             }
-            let available: Vec<String> = refs.keys()
-                .map(|k| format!("surface:{}", k))
-                .collect();
+            let available: Vec<String> = refs.keys().map(|k| format!("surface:{}", k)).collect();
             return Err((format!("surface:{} not found", n), available));
         }
     }
@@ -158,7 +156,11 @@ fn layout_to_data(
                 .and_then(|v| v.as_str())
                 .and_then(crate::agent::Provider::from_str);
             let command = if let Some(p) = agent_provider {
-                let resume_cwd = if cwd.is_empty() { None } else { Some(cwd.to_string()) };
+                let resume_cwd = if cwd.is_empty() {
+                    None
+                } else {
+                    Some(cwd.to_string())
+                };
                 crate::agent::register(&uuid.to_string(), p, None, resume_cwd.clone());
                 // startup_command handles cd (into cwd) + CMUX_PANE + launch.
                 let session = crate::agent::AgentSession {
@@ -193,7 +195,11 @@ fn layout_to_data(
                 .get("direction")
                 .and_then(|v| v.as_str())
                 .unwrap_or("horizontal");
-            let orientation = if direction == "vertical" { "vertical" } else { "horizontal" };
+            let orientation = if direction == "vertical" {
+                "vertical"
+            } else {
+                "horizontal"
+            };
             let ratio = spec.get("ratio").and_then(|v| v.as_f64()).unwrap_or(0.5);
             if !(0.05..=0.95).contains(&ratio) {
                 return Err(format!("split ratio {} out of range 0.05-0.95", ratio));
@@ -243,7 +249,10 @@ fn schedule_startup_commands(
         });
         if pending.is_empty() || tries >= 25 {
             for (uuid, _) in &pending {
-                tracing::debug!("cmux: layout startup command dropped — surface {} never realized", uuid);
+                tracing::debug!(
+                    "cmux: layout startup command dropped — surface {} never realized",
+                    uuid
+                );
             }
             glib::ControlFlow::Break
         } else {
@@ -272,10 +281,7 @@ pub fn schedule_agent_resumes(state: crate::app_state::AppStateRef) {
 /// SOCK-05: Only focus-intent commands (workspace.select, workspace.next/previous/last,
 /// pane.focus, pane.last, surface.focus) may call grab_active_focus() or focus_active_surface().
 #[allow(unused_variables)]
-pub fn handle_socket_command(
-    cmd: SocketCommand,
-    state: &crate::app_state::AppStateRef,
-) {
+pub fn handle_socket_command(cmd: SocketCommand, state: &crate::app_state::AppStateRef) {
     match cmd {
         // -- system.* --
         SocketCommand::Ping { req_id, resp_tx } => {
@@ -284,71 +290,140 @@ pub fn handle_socket_command(
 
         SocketCommand::Identify { req_id, resp_tx } => {
             let socket_path = crate::socket::socket_path().to_string_lossy().to_string();
-            let _ = resp_tx.send(ok(req_id, json!({
-                "version": env!("CARGO_PKG_VERSION"),
-                "platform": "linux",
-                "socket_path": socket_path,
-                // What platform::apply_launch_env auto-configured at startup
-                // (e.g. GDK_DEBUG=gl-prefer-gl on NVIDIA). Empty = nothing.
-                "launch_env": crate::platform::applied_launch_env(),
-                // GL context facts from the first GLArea realize (or its
-                // error) — the first thing to check on a blank window.
-                "gl": crate::ghostty::surface::gl_info(),
-            })));
+            let _ = resp_tx.send(ok(
+                req_id,
+                json!({
+                    "version": env!("CARGO_PKG_VERSION"),
+                    "platform": "linux",
+                    "socket_path": socket_path,
+                    // What platform::apply_launch_env auto-configured at startup
+                    // (e.g. GDK_DEBUG=gl-prefer-gl on NVIDIA). Empty = nothing.
+                    "launch_env": crate::platform::applied_launch_env(),
+                    // GL context facts from the first GLArea realize (or its
+                    // error) — the first thing to check on a blank window.
+                    "gl": crate::ghostty::surface::gl_info(),
+                }),
+            ));
         }
 
         SocketCommand::Capabilities { req_id, resp_tx } => {
             let methods: Vec<&str> = vec![
-                "system.ping", "system.identify", "system.capabilities",
-                "workspace.list", "workspace.current", "workspace.create",
-                "workspace.select", "workspace.close", "workspace.rename",
-                "workspace.next", "workspace.previous", "workspace.last", "workspace.reorder",
-                "surface.list", "surface.split", "surface.focus", "surface.close",
-                "surface.send_text", "surface.send_key", "surface.read_text",
-                "surface.health", "surface.refresh", "surface.top",
-                "rendezvous.wait", "rendezvous.signal",
-                "workspace.set_group", "workspace_group.list",
-                "pane.list", "pane.focus", "pane.last",
-                "window.list", "window.current",
-                "notification.list", "notification.clear", "notification.create",
+                "system.ping",
+                "system.identify",
+                "system.capabilities",
+                "workspace.list",
+                "workspace.current",
+                "workspace.create",
+                "workspace.select",
+                "workspace.close",
+                "workspace.rename",
+                "workspace.next",
+                "workspace.previous",
+                "workspace.last",
+                "workspace.reorder",
+                "surface.list",
+                "surface.split",
+                "surface.focus",
+                "surface.close",
+                "surface.send_text",
+                "surface.send_key",
+                "surface.read_text",
+                "surface.health",
+                "surface.refresh",
+                "surface.top",
+                "rendezvous.wait",
+                "rendezvous.signal",
+                "workspace.set_group",
+                "workspace_group.list",
+                "pane.list",
+                "pane.focus",
+                "pane.last",
+                "window.list",
+                "window.current",
+                "notification.list",
+                "notification.clear",
+                "notification.create",
                 "events.subscribe",
-                "workspace.set_status", "workspace.set_progress", "workspace.log",
-                "agent.hooks_setup", "agent.list", "agent.report_session",
+                "workspace.set_status",
+                "workspace.set_progress",
+                "workspace.log",
+                "agent.hooks_setup",
+                "agent.list",
+                "agent.report_session",
                 // Browser lifecycle + streaming
-                "browser.open", "browser.close", "browser.list",
-                "browser.stream.enable", "browser.stream.disable",
-                "browser.snapshot", "browser.screenshot",
+                "browser.open",
+                "browser.close",
+                "browser.list",
+                "browser.stream.enable",
+                "browser.stream.disable",
+                "browser.snapshot",
+                "browser.screenshot",
                 // P0: navigation
-                "browser.navigate", "browser.goto",
-                "browser.back", "browser.forward", "browser.reload",
+                "browser.navigate",
+                "browser.goto",
+                "browser.back",
+                "browser.forward",
+                "browser.reload",
                 // P0: interaction
-                "browser.click", "browser.dblclick", "browser.type", "browser.fill",
-                "browser.press", "browser.keydown", "browser.keyup",
-                "browser.hover", "browser.focus",
-                "browser.check", "browser.uncheck", "browser.select",
-                "browser.scroll", "browser.scroll_into_view",
-                "browser.drag", "browser.upload", "browser.download", "browser.pdf",
+                "browser.click",
+                "browser.dblclick",
+                "browser.type",
+                "browser.fill",
+                "browser.press",
+                "browser.keydown",
+                "browser.keyup",
+                "browser.hover",
+                "browser.focus",
+                "browser.check",
+                "browser.uncheck",
+                "browser.select",
+                "browser.scroll",
+                "browser.scroll_into_view",
+                "browser.drag",
+                "browser.upload",
+                "browser.download",
+                "browser.pdf",
                 // P0: evaluation + waiting
-                "browser.eval", "browser.wait",
+                "browser.eval",
+                "browser.wait",
                 // P0: getters
-                "browser.get.url", "browser.get.title", "browser.get.text",
-                "browser.get.html", "browser.get.value", "browser.get.attr",
-                "browser.get.count", "browser.get.box", "browser.get.styles",
+                "browser.get.url",
+                "browser.get.title",
+                "browser.get.text",
+                "browser.get.html",
+                "browser.get.value",
+                "browser.get.attr",
+                "browser.get.count",
+                "browser.get.box",
+                "browser.get.styles",
                 // P0: state checks
-                "browser.is.visible", "browser.is.enabled", "browser.is.checked",
+                "browser.is.visible",
+                "browser.is.enabled",
+                "browser.is.checked",
                 // P1: locators
-                "browser.find.role", "browser.find.text", "browser.find.label",
-                "browser.find.placeholder", "browser.find.alt", "browser.find.title",
-                "browser.find.testid", "browser.find.nth", "browser.find.first",
+                "browser.find.role",
+                "browser.find.text",
+                "browser.find.label",
+                "browser.find.placeholder",
+                "browser.find.alt",
+                "browser.find.title",
+                "browser.find.testid",
+                "browser.find.nth",
+                "browser.find.first",
                 "browser.find.last",
                 // P1: frames, dialogs, console, errors
-                "browser.frame.select", "browser.frame.main",
-                "browser.dialog.accept", "browser.dialog.dismiss",
-                "browser.console.list", "browser.errors.list",
+                "browser.frame.select",
+                "browser.frame.main",
+                "browser.dialog.accept",
+                "browser.dialog.dismiss",
+                "browser.console.list",
+                "browser.errors.list",
                 "browser.highlight",
-                "browser.state.save", "browser.state.load",
+                "browser.state.save",
+                "browser.state.load",
                 // Debug
-                "debug.layout", "debug.type",
+                "debug.layout",
+                "debug.type",
             ];
             let _ = resp_tx.send(ok(req_id, json!({"methods": methods})));
         }
@@ -357,21 +432,26 @@ pub fn handle_socket_command(
         SocketCommand::WorkspaceList { req_id, resp_tx } => {
             // SOCK-05: No focus side effects.
             let s = state.borrow();
-            let list: Vec<Value> = s.workspaces.iter().enumerate().map(|(i, ws)| {
-                let pane_count = s
-                    .split_engines
-                    .get(i)
-                    .map(|e| e.all_panes().len())
-                    .unwrap_or(0);
-                json!({
-                    "index": i,
-                    "id": ws.uuid.to_string(),
-                    "title": ws.name,
-                    "selected": i == s.active_index,
-                    "pane_count": pane_count,
-                    "group": ws.group,
+            let list: Vec<Value> = s
+                .workspaces
+                .iter()
+                .enumerate()
+                .map(|(i, ws)| {
+                    let pane_count = s
+                        .split_engines
+                        .get(i)
+                        .map(|e| e.all_panes().len())
+                        .unwrap_or(0);
+                    json!({
+                        "index": i,
+                        "id": ws.uuid.to_string(),
+                        "title": ws.name,
+                        "selected": i == s.active_index,
+                        "pane_count": pane_count,
+                        "group": ws.group,
+                    })
                 })
-            }).collect();
+                .collect();
             let _ = resp_tx.send(ok(req_id, json!({"workspaces": list})));
         }
 
@@ -380,10 +460,13 @@ pub fn handle_socket_command(
             let s = state.borrow();
             match s.active_workspace() {
                 Some(ws) => {
-                    let _ = resp_tx.send(ok(req_id, json!({
-                        "uuid": ws.uuid.to_string(),
-                        "name": ws.name,
-                    })));
+                    let _ = resp_tx.send(ok(
+                        req_id,
+                        json!({
+                            "uuid": ws.uuid.to_string(),
+                            "name": ws.name,
+                        }),
+                    ));
                 }
                 None => {
                     let _ = resp_tx.send(err(req_id, "no_workspace", "no active workspace"));
@@ -391,19 +474,34 @@ pub fn handle_socket_command(
             }
         }
 
-        SocketCommand::WorkspaceCreate { req_id, remote_target, name, cwd, layout, resp_tx } => {
+        SocketCommand::WorkspaceCreate {
+            req_id,
+            remote_target,
+            name,
+            cwd,
+            layout,
+            resp_tx,
+        } => {
             if let Some(target) = remote_target {
                 // SSH workspace creation per D-13, D-15
                 // Create per-workspace bridge for SSH I/O routing
                 let (write_tx, write_rx) = tokio::sync::mpsc::unbounded_channel();
                 let (output_tx, _output_rx) = tokio::sync::mpsc::unbounded_channel();
-                let bridge = std::sync::Arc::new(crate::ssh::bridge::SshBridge::new(write_tx, write_rx, output_tx));
-                let id = state.borrow_mut().create_remote_workspace(target.clone(), &bridge);
+                let bridge = std::sync::Arc::new(crate::ssh::bridge::SshBridge::new(
+                    write_tx, write_rx, output_tx,
+                ));
+                let id = state
+                    .borrow_mut()
+                    .create_remote_workspace(target.clone(), &bridge);
                 // Store bridge on AppState for later access
-                state.borrow_mut().workspace_bridges.insert(id, bridge.clone());
+                state
+                    .borrow_mut()
+                    .workspace_bridges
+                    .insert(id, bridge.clone());
                 let uuid_str = {
                     let s = state.borrow();
-                    s.workspaces.iter()
+                    s.workspaces
+                        .iter()
                         .find(|ws| ws.id == id)
                         .map(|ws| ws.uuid.to_string())
                         .unwrap_or_default()
@@ -412,7 +510,9 @@ pub fn handle_socket_command(
                 let ssh_tx = state.borrow().ssh_event_tx.clone();
                 let rt_handle = state.borrow().runtime_handle.clone();
                 if let (Some(tx), Some(rt)) = (ssh_tx, rt_handle) {
-                    let handle = rt.spawn(crate::ssh::tunnel::run_ssh_lifecycle(id, target, tx, bridge));
+                    let handle = rt.spawn(crate::ssh::tunnel::run_ssh_lifecycle(
+                        id, target, tx, bridge,
+                    ));
                     state.borrow_mut().ssh_task_handles.insert(id, handle);
                 }
                 let _ = resp_tx.send(ok(req_id, json!({"uuid": uuid_str, "remote": true})));
@@ -454,10 +554,8 @@ pub fn handle_socket_command(
                             "workspace.created",
                             json!({"uuid": uuid_str, "name": ws_session.name, "layout": true}),
                         );
-                        let _ = resp_tx.send(ok(
-                            req_id,
-                            json!({"uuid": uuid_str, "surfaces": surfaces}),
-                        ));
+                        let _ = resp_tx
+                            .send(ok(req_id, json!({"uuid": uuid_str, "surfaces": surfaces})));
                     }
                     None => {
                         let _ = resp_tx.send(err(
@@ -490,7 +588,11 @@ pub fn handle_socket_command(
             }
         }
 
-        SocketCommand::WorkspaceSelect { req_id, id, resp_tx } => {
+        SocketCommand::WorkspaceSelect {
+            req_id,
+            id,
+            resp_tx,
+        } => {
             // SOCK-05: workspace.select IS a focus-intent command.
             let idx = {
                 let s = state.borrow();
@@ -507,7 +609,11 @@ pub fn handle_socket_command(
             }
         }
 
-        SocketCommand::WorkspaceClose { req_id, id, resp_tx } => {
+        SocketCommand::WorkspaceClose {
+            req_id,
+            id,
+            resp_tx,
+        } => {
             // SOCK-05: No focus side effects (close_workspace adjusts index internally).
             let idx = {
                 let s = state.borrow();
@@ -519,7 +625,11 @@ pub fn handle_socket_command(
                     if closed {
                         let _ = resp_tx.send(ok(req_id, json!({})));
                     } else {
-                        let _ = resp_tx.send(err(req_id, "last_workspace", "cannot close the last workspace"));
+                        let _ = resp_tx.send(err(
+                            req_id,
+                            "last_workspace",
+                            "cannot close the last workspace",
+                        ));
                     }
                 }
                 None => {
@@ -528,7 +638,12 @@ pub fn handle_socket_command(
             }
         }
 
-        SocketCommand::WorkspaceRename { req_id, id, name, resp_tx } => {
+        SocketCommand::WorkspaceRename {
+            req_id,
+            id,
+            name,
+            resp_tx,
+        } => {
             // SOCK-05: No focus side effects. Find workspace by uuid, switch to it
             // (rename_active requires the target to be active), then rename.
             let idx = {
@@ -571,7 +686,12 @@ pub fn handle_socket_command(
             let _ = resp_tx.send(ok(req_id, json!({})));
         }
 
-        SocketCommand::WorkspaceReorder { req_id, id, position, resp_tx } => {
+        SocketCommand::WorkspaceReorder {
+            req_id,
+            id,
+            position,
+            resp_tx,
+        } => {
             // SOCK-05: No focus side effects.
             let mut s = state.borrow_mut();
             let idx = s.workspaces.iter().position(|ws| ws.uuid.to_string() == id);
@@ -604,9 +724,12 @@ pub fn handle_socket_command(
         SocketCommand::WindowList { req_id, resp_tx } => {
             // SOCK-05: No focus side effects.
             let workspace_count = state.borrow().workspaces.len();
-            let _ = resp_tx.send(ok(req_id, json!({
-                "windows": [{"id": "main", "workspaces": workspace_count}]
-            })));
+            let _ = resp_tx.send(ok(
+                req_id,
+                json!({
+                    "windows": [{"id": "main", "workspaces": workspace_count}]
+                }),
+            ));
         }
 
         SocketCommand::WindowCurrent { req_id, resp_tx } => {
@@ -630,7 +753,11 @@ pub fn handle_socket_command(
             }
         }
 
-        SocketCommand::DebugType { req_id, text, resp_tx } => {
+        SocketCommand::DebugType {
+            req_id,
+            text,
+            resp_tx,
+        } => {
             // SOCK-05: No focus side effects (sends text to active surface without changing focus).
             let s = state.borrow();
             if let Some(engine) = s.split_engines.get(s.active_index) {
@@ -657,7 +784,9 @@ pub fn handle_socket_command(
             // SOCK-05: No focus side effects.
             let s = state.borrow();
             let mut panes: Vec<Value> = Vec::new();
-            for (ws_idx, (ws, engine)) in s.workspaces.iter().zip(s.split_engines.iter()).enumerate() {
+            for (ws_idx, (ws, engine)) in
+                s.workspaces.iter().zip(s.split_engines.iter()).enumerate()
+            {
                 for (pane_uuid, pane_id, active) in engine.all_panes() {
                     panes.push(json!({
                         "uuid": pane_uuid.to_string(),
@@ -700,7 +829,10 @@ pub fn handle_socket_command(
             let mut rows: Vec<Value> = Vec::new();
             let mut unmatched: Vec<(String, String)> = Vec::new();
             for (uuid, ws_name) in &panes {
-                match procs.iter().position(|p| p.cmux_pane.as_deref() == Some(uuid.as_str())) {
+                match procs
+                    .iter()
+                    .position(|p| p.cmux_pane.as_deref() == Some(uuid.as_str()))
+                {
                     Some(i) => {
                         used[i] = true;
                         rows.push(row(uuid, ws_name, &procs[i], "env"));
@@ -722,7 +854,13 @@ pub fn handle_socket_command(
             let _ = resp_tx.send(ok(req_id, json!({"top": rows})));
         }
 
-        SocketCommand::SurfaceSplit { req_id, id, direction, agent, resp_tx } => {
+        SocketCommand::SurfaceSplit {
+            req_id,
+            id,
+            direction,
+            agent,
+            resp_tx,
+        } => {
             // Split a specific surface (by UUID) or the active pane in the
             // active workspace. SplitEngine only knows how to split its
             // active pane, so an explicit target becomes the active pane
@@ -749,11 +887,7 @@ pub fn handle_socket_command(
                         match engine.find_pane_id_by_uuid(uuid_str) {
                             Some(pid) => engine.active_pane_id = pid,
                             None => {
-                                let _ = resp_tx.send(err(
-                                    req_id,
-                                    "not_found",
-                                    "surface not found",
-                                ));
+                                let _ = resp_tx.send(err(req_id, "not_found", "surface not found"));
                                 return;
                             }
                         }
@@ -783,13 +917,14 @@ pub fn handle_socket_command(
                             return;
                         }
                     }
-                    engine.split_active(orientation)
-                        .and_then(|new_pane_id| {
-                            // Find the uuid of the newly created pane.
-                            engine.all_panes().into_iter()
-                                .find(|(_, pid, _)| *pid == new_pane_id)
-                                .map(|(uuid, _, _)| uuid.to_string())
-                        })
+                    engine.split_active(orientation).and_then(|new_pane_id| {
+                        // Find the uuid of the newly created pane.
+                        engine
+                            .all_panes()
+                            .into_iter()
+                            .find(|(_, pid, _)| *pid == new_pane_id)
+                            .map(|(uuid, _, _)| uuid.to_string())
+                    })
                 } else {
                     None
                 }
@@ -836,11 +971,16 @@ pub fn handle_socket_command(
             }
         }
 
-        SocketCommand::SurfaceFocus { req_id, id, resp_tx } => {
+        SocketCommand::SurfaceFocus {
+            req_id,
+            id,
+            resp_tx,
+        } => {
             // SOCK-05: surface.focus IS a focus-intent command — allowed to change focus.
             let pane_id = {
                 let s = state.borrow();
-                s.split_engines.get(s.active_index)
+                s.split_engines
+                    .get(s.active_index)
                     .and_then(|engine| engine.find_pane_id_by_uuid(&id))
             };
             match pane_id {
@@ -855,15 +995,22 @@ pub fn handle_socket_command(
                     drop(s);
                     let _ = resp_tx.send(ok(req_id, json!({})));
                 }
-                None => { let _ = resp_tx.send(err(req_id, "not_found", "surface not found")); }
+                None => {
+                    let _ = resp_tx.send(err(req_id, "not_found", "surface not found"));
+                }
             }
         }
 
-        SocketCommand::SurfaceClose { req_id, id, resp_tx } => {
+        SocketCommand::SurfaceClose {
+            req_id,
+            id,
+            resp_tx,
+        } => {
             // Close pane by uuid. Set it as active, then close_active().
             let pane_id = {
                 let s = state.borrow();
-                s.split_engines.get(s.active_index)
+                s.split_engines
+                    .get(s.active_index)
                     .and_then(|engine| engine.find_pane_id_by_uuid(&id))
             };
             match pane_id {
@@ -880,15 +1027,27 @@ pub fn handle_socket_command(
                         }
                     };
                     match result {
-                        Some(_) => { let _ = resp_tx.send(ok(req_id, json!({}))); }
-                        None => { let _ = resp_tx.send(err(req_id, "close_failed", "cannot close last pane")); }
+                        Some(_) => {
+                            let _ = resp_tx.send(ok(req_id, json!({})));
+                        }
+                        None => {
+                            let _ =
+                                resp_tx.send(err(req_id, "close_failed", "cannot close last pane"));
+                        }
                     }
                 }
-                None => { let _ = resp_tx.send(err(req_id, "not_found", "surface not found")); }
+                None => {
+                    let _ = resp_tx.send(err(req_id, "not_found", "surface not found"));
+                }
             }
         }
 
-        SocketCommand::SurfaceSendText { req_id, id, text, resp_tx } => {
+        SocketCommand::SurfaceSendText {
+            req_id,
+            id,
+            text,
+            resp_tx,
+        } => {
             // SOCK-05: send_text is NOT a focus-intent command — NO focus change.
             let surface = resolve_surface_ptr(&state.borrow(), id.as_ref());
             match surface {
@@ -902,7 +1061,12 @@ pub fn handle_socket_command(
             }
         }
 
-        SocketCommand::SurfaceSendKey { req_id, id, key, resp_tx } => {
+        SocketCommand::SurfaceSendKey {
+            req_id,
+            id,
+            key,
+            resp_tx,
+        } => {
             // SOCK-05: send_key is NOT a focus-intent command — NO focus change.
             // Named keys (enter, tab, escape, arrows…) and ctrl+<letter> map to
             // their terminal byte sequences; single printable chars pass through.
@@ -925,7 +1089,12 @@ pub fn handle_socket_command(
             }
         }
 
-        SocketCommand::SurfaceReadText { req_id, id, scrollback, resp_tx } => {
+        SocketCommand::SurfaceReadText {
+            req_id,
+            id,
+            scrollback,
+            resp_tx,
+        } => {
             // SOCK-05: No focus side effects.
             // Reads via ghostty_surface_read_text (exported by the cmux ghostty
             // fork; locks renderer state internally). VIEWPORT = visible page;
@@ -958,10 +1127,8 @@ pub fn handle_socket_command(
                         let mut out: g::ghostty_text_s = std::mem::zeroed();
                         if g::ghostty_surface_read_text(surf, sel, &mut out) && !out.text.is_null()
                         {
-                            let bytes = std::slice::from_raw_parts(
-                                out.text as *const u8,
-                                out.text_len,
-                            );
+                            let bytes =
+                                std::slice::from_raw_parts(out.text as *const u8, out.text_len);
                             let s = String::from_utf8_lossy(bytes).into_owned();
                             g::ghostty_surface_free_text(surf, &mut out);
                             Some(s)
@@ -988,7 +1155,11 @@ pub fn handle_socket_command(
             }
         }
 
-        SocketCommand::SurfaceHealth { req_id, id, resp_tx } => {
+        SocketCommand::SurfaceHealth {
+            req_id,
+            id,
+            resp_tx,
+        } => {
             // SOCK-05: health is NOT focus-intent — NO focus change.
             let (found, has_attention) = {
                 let s = state.borrow();
@@ -998,22 +1169,33 @@ pub fn handle_socket_command(
                     s.split_engines
                         .iter()
                         .find_map(|engine| {
-                            engine.find_pane_id_by_uuid(uuid_str).map(|pid| {
-                                (true, engine.root.pane_has_attention(pid))
-                            })
+                            engine
+                                .find_pane_id_by_uuid(uuid_str)
+                                .map(|pid| (true, engine.root.pane_has_attention(pid)))
                         })
                         .unwrap_or((false, false))
                 } else if let Some(engine) = s.split_engines.get(s.active_index) {
-                    let attn = engine.root.find_active_pane_id()
+                    let attn = engine
+                        .root
+                        .find_active_pane_id()
                         .map(|pid| engine.root.pane_has_attention(pid))
                         .unwrap_or(false);
                     (true, attn)
-                } else { (false, false) }
+                } else {
+                    (false, false)
+                }
             };
-            let _ = resp_tx.send(ok(req_id, json!({"alive": found, "has_attention": has_attention})));
+            let _ = resp_tx.send(ok(
+                req_id,
+                json!({"alive": found, "has_attention": has_attention}),
+            ));
         }
 
-        SocketCommand::SurfaceRefresh { req_id, id, resp_tx } => {
+        SocketCommand::SurfaceRefresh {
+            req_id,
+            id,
+            resp_tx,
+        } => {
             // SOCK-05: refresh is NOT focus-intent — NO focus change.
             // Queue a render on the target surface's GLArea.
             let gl_area = {
@@ -1025,7 +1207,9 @@ pub fn handle_socket_command(
                         engine.root.find_active_pane_id()
                     };
                     target_pane_id.and_then(|pid| engine.gl_area_for_pane(pid))
-                } else { None }
+                } else {
+                    None
+                }
             };
             if let Some(area) = gl_area {
                 area.queue_render();
@@ -1038,7 +1222,9 @@ pub fn handle_socket_command(
             // SOCK-05: No focus side effects. Alias for surface.list.
             let s = state.borrow();
             let mut panes: Vec<Value> = Vec::new();
-            for (ws_idx, (ws, engine)) in s.workspaces.iter().zip(s.split_engines.iter()).enumerate() {
+            for (ws_idx, (ws, engine)) in
+                s.workspaces.iter().zip(s.split_engines.iter()).enumerate()
+            {
                 for (pane_uuid, pane_id, active) in engine.all_panes() {
                     panes.push(json!({
                         "uuid": pane_uuid.to_string(),
@@ -1052,13 +1238,20 @@ pub fn handle_socket_command(
             let _ = resp_tx.send(ok(req_id, json!({"panes": panes})));
         }
 
-        SocketCommand::PaneFocus { req_id, id, resp_tx } => {
+        SocketCommand::PaneFocus {
+            req_id,
+            id,
+            resp_tx,
+        } => {
             // SOCK-05: pane.focus IS focus-intent — allowed to change focus.
             let pane_id = {
                 let s = state.borrow();
                 if let Some(engine) = s.split_engines.get(s.active_index) {
-                    id.as_ref().and_then(|uuid_str| engine.find_pane_id_by_uuid(uuid_str))
-                } else { None }
+                    id.as_ref()
+                        .and_then(|uuid_str| engine.find_pane_id_by_uuid(uuid_str))
+                } else {
+                    None
+                }
             };
             match pane_id {
                 Some(pid) => {
@@ -1072,7 +1265,9 @@ pub fn handle_socket_command(
                     drop(s);
                     let _ = resp_tx.send(ok(req_id, json!({})));
                 }
-                None => { let _ = resp_tx.send(err(req_id, "not_found", "pane not found")); }
+                None => {
+                    let _ = resp_tx.send(err(req_id, "not_found", "pane not found"));
+                }
             }
         }
 
@@ -1092,17 +1287,25 @@ pub fn handle_socket_command(
         SocketCommand::NotificationList { req_id, resp_tx } => {
             // SOCK-05: No focus side effects. Read-only attention state query.
             let s = state.borrow();
-            let notifications: Vec<Value> = s.workspaces.iter().map(|ws| {
-                json!({
-                    "workspace_uuid": ws.uuid.to_string(),
-                    "workspace_name": ws.name,
-                    "has_attention": ws.has_attention,
+            let notifications: Vec<Value> = s
+                .workspaces
+                .iter()
+                .map(|ws| {
+                    json!({
+                        "workspace_uuid": ws.uuid.to_string(),
+                        "workspace_name": ws.name,
+                        "has_attention": ws.has_attention,
+                    })
                 })
-            }).collect();
+                .collect();
             let _ = resp_tx.send(ok(req_id, json!({"notifications": notifications})));
         }
 
-        SocketCommand::NotificationClear { req_id, id, resp_tx } => {
+        SocketCommand::NotificationClear {
+            req_id,
+            id,
+            resp_tx,
+        } => {
             // SOCK-05: No focus side effects. Clears attention without switching workspace.
             let idx = {
                 let s = state.borrow();
@@ -1161,17 +1364,30 @@ pub fn handle_socket_command(
             let _ = resp_tx.send(ok(req_id, json!({"sessions": sessions})));
         }
 
-        SocketCommand::AgentReportSession { req_id, surface, provider, session_id, resp_tx } => {
+        SocketCommand::AgentReportSession {
+            req_id,
+            surface,
+            provider,
+            session_id,
+            resp_tx,
+        } => {
             // SOCK-05: No focus side effects. Called by the provider's
             // SessionStart hook (via `cmux agent report-session`).
             if surface.is_empty() || session_id.is_empty() {
-                let _ = resp_tx.send(err(req_id, "invalid_params", "surface and session_id required"));
+                let _ = resp_tx.send(err(
+                    req_id,
+                    "invalid_params",
+                    "surface and session_id required",
+                ));
             } else {
                 // If the hook fired for a surface we didn't pre-register (e.g.
                 // agent launched by hand), register it now from the reported
                 // provider so it still becomes resumable.
                 if crate::agent::get(&surface).is_none() {
-                    if let Some(p) = provider.as_deref().and_then(crate::agent::Provider::from_str) {
+                    if let Some(p) = provider
+                        .as_deref()
+                        .and_then(crate::agent::Provider::from_str)
+                    {
                         crate::agent::register(&surface, p, None, None);
                     }
                 }
@@ -1186,26 +1402,45 @@ pub fn handle_socket_command(
                     }
                     crate::agent::CaptureResult::AlreadyCaptured => {
                         // Keep the first id (the one with history); ack anyway.
-                        let _ = resp_tx.send(ok(req_id, json!({"captured": false, "kept_existing": true})));
+                        let _ = resp_tx.send(ok(
+                            req_id,
+                            json!({"captured": false, "kept_existing": true}),
+                        ));
                     }
                     crate::agent::CaptureResult::NotAgent => {
-                        let _ = resp_tx.send(err(req_id, "not_found", "surface is not an agent surface"));
+                        let _ = resp_tx.send(err(
+                            req_id,
+                            "not_found",
+                            "surface is not an agent surface",
+                        ));
                     }
                 }
             }
         }
 
-        SocketCommand::WorkspaceSetGroup { req_id, workspace, group, resp_tx } => {
+        SocketCommand::WorkspaceSetGroup {
+            req_id,
+            workspace,
+            group,
+            resp_tx,
+        } => {
             // Groups are labels, not entities: assigning a new label creates
             // the group; clearing the last member removes it (roadmap 3.4).
             let mut s = state.borrow_mut();
             let idx = match workspace {
-                Some(ref uuid) => s.workspaces.iter().position(|ws| ws.uuid.to_string() == *uuid),
+                Some(ref uuid) => s
+                    .workspaces
+                    .iter()
+                    .position(|ws| ws.uuid.to_string() == *uuid),
                 None => Some(s.active_index),
             };
             match idx {
                 Some(i) => {
-                    let value = if group.trim().is_empty() { None } else { Some(group.clone()) };
+                    let value = if group.trim().is_empty() {
+                        None
+                    } else {
+                        Some(group.clone())
+                    };
                     s.workspaces[i].group = value.clone();
                     let ws_uuid = s.workspaces[i].uuid.to_string();
                     s.trigger_session_save();
@@ -1241,11 +1476,20 @@ pub fn handle_socket_command(
             let _ = resp_tx.send(ok(req_id, json!({"groups": out})));
         }
 
-        SocketCommand::WorkspaceSetStatus { req_id, workspace, state: status, color, resp_tx } => {
+        SocketCommand::WorkspaceSetStatus {
+            req_id,
+            workspace,
+            state: status,
+            color,
+            resp_tx,
+        } => {
             // SOCK-05: No focus side effects. Status board write (prompt-13 style).
             let s = state.borrow();
             let idx = match workspace {
-                Some(ref uuid) => s.workspaces.iter().position(|ws| ws.uuid.to_string() == *uuid),
+                Some(ref uuid) => s
+                    .workspaces
+                    .iter()
+                    .position(|ws| ws.uuid.to_string() == *uuid),
                 None => Some(s.active_index),
             };
             match idx {
@@ -1270,11 +1514,20 @@ pub fn handle_socket_command(
             }
         }
 
-        SocketCommand::WorkspaceSetProgress { req_id, workspace, value, label, resp_tx } => {
+        SocketCommand::WorkspaceSetProgress {
+            req_id,
+            workspace,
+            value,
+            label,
+            resp_tx,
+        } => {
             // SOCK-05: No focus side effects.
             let s = state.borrow();
             let idx = match workspace {
-                Some(ref uuid) => s.workspaces.iter().position(|ws| ws.uuid.to_string() == *uuid),
+                Some(ref uuid) => s
+                    .workspaces
+                    .iter()
+                    .position(|ws| ws.uuid.to_string() == *uuid),
                 None => Some(s.active_index),
             };
             match idx {
@@ -1295,11 +1548,19 @@ pub fn handle_socket_command(
             }
         }
 
-        SocketCommand::WorkspaceLog { req_id, workspace, message, resp_tx } => {
+        SocketCommand::WorkspaceLog {
+            req_id,
+            workspace,
+            message,
+            resp_tx,
+        } => {
             // SOCK-05: No focus side effects.
             let s = state.borrow();
             let idx = match workspace {
-                Some(ref uuid) => s.workspaces.iter().position(|ws| ws.uuid.to_string() == *uuid),
+                Some(ref uuid) => s
+                    .workspaces
+                    .iter()
+                    .position(|ws| ws.uuid.to_string() == *uuid),
                 None => Some(s.active_index),
             };
             match idx {
@@ -1320,7 +1581,14 @@ pub fn handle_socket_command(
             }
         }
 
-        SocketCommand::NotificationCreate { req_id, title, body, workspace, desktop, resp_tx } => {
+        SocketCommand::NotificationCreate {
+            req_id,
+            title,
+            body,
+            workspace,
+            desktop,
+            resp_tx,
+        } => {
             // SOCK-05: No focus side effects — marks attention and notifies,
             // never switches workspace. Agents raise these from lifecycle
             // hooks ("done", "needs input"); orchestrators consume them via
@@ -1337,7 +1605,10 @@ pub fn handle_socket_command(
                 idx.map(|i| {
                     s.workspaces[i].has_attention = true;
                     s.update_sidebar_attention(i);
-                    (s.workspaces[i].uuid.to_string(), s.workspaces[i].name.clone())
+                    (
+                        s.workspaces[i].uuid.to_string(),
+                        s.workspaces[i].name.clone(),
+                    )
                 })
             };
             match ws_info {
@@ -1373,7 +1644,12 @@ pub fn handle_socket_command(
 
         // -- browser.* (Phase 8: D-04 lifecycle + streaming) --
         // SOCK-05: None of these commands steal focus.
-        SocketCommand::BrowserOpen { req_id, url, workspace, resp_tx } => {
+        SocketCommand::BrowserOpen {
+            req_id,
+            url,
+            workspace,
+            resp_tx,
+        } => {
             let mut s = state.borrow_mut();
             // Lazy-init BrowserManager per D-05
             let bm = s.browser_manager_mut();
@@ -1392,7 +1668,8 @@ pub fn handle_socket_command(
                     // Allocate surface ref (D-06)
                     s.browser_surface_counter += 1;
                     let ref_id = s.browser_surface_counter;
-                    let uuid = result.get("id")
+                    let uuid = result
+                        .get("id")
                         .or_else(|| result.get("surface_id"))
                         .and_then(|v| v.as_str())
                         .unwrap_or("unknown")
@@ -1401,7 +1678,10 @@ pub fn handle_socket_command(
                     // Augment response with surface_ref
                     let mut response = result.clone();
                     if let Some(obj) = response.as_object_mut() {
-                        obj.insert("surface_ref".to_string(), serde_json::json!(format!("surface:{}", ref_id)));
+                        obj.insert(
+                            "surface_ref".to_string(),
+                            serde_json::json!(format!("surface:{}", ref_id)),
+                        );
                         obj.insert("uuid".to_string(), serde_json::json!(uuid));
                     }
                     // Create preview pane and auto-enable streaming
@@ -1446,11 +1726,10 @@ pub fn handle_socket_command(
                         let engine = s.active_split_engine_mut();
                         if let Some(eng) = engine {
                             // Try to find existing Preview node's Picture
-                            find_preview_picture(&eng.root)
-                                .or_else(|| {
-                                    // No preview pane yet -- create one
-                                    eng.split_active_with_preview().map(|w| w.picture)
-                                })
+                            find_preview_picture(&eng.root).or_else(|| {
+                                // No preview pane yet -- create one
+                                eng.split_active_with_preview().map(|w| w.picture)
+                            })
                         } else {
                             None
                         }
@@ -1502,7 +1781,9 @@ pub fn handle_socket_command(
 
         SocketCommand::BrowserList { req_id, resp_tx } => {
             let s = state.borrow();
-            let surfaces: Vec<serde_json::Value> = s.browser_surface_refs.iter()
+            let surfaces: Vec<serde_json::Value> = s
+                .browser_surface_refs
+                .iter()
                 .map(|(ref_id, uuid)| {
                     serde_json::json!({
                         "ref": format!("surface:{}", ref_id),
@@ -1515,7 +1796,13 @@ pub fn handle_socket_command(
         }
 
         // -- browser.* generic proxy (P0/P1 parity) --
-        SocketCommand::BrowserAction { req_id, action, mut params, surface_ref, resp_tx } => {
+        SocketCommand::BrowserAction {
+            req_id,
+            action,
+            mut params,
+            surface_ref,
+            resp_tx,
+        } => {
             let s = state.borrow();
             if let Some(ref bm) = s.browser_manager {
                 // Resolve surface ref if provided
@@ -1562,8 +1849,16 @@ pub fn handle_socket_command(
         }
 
         // -- Tier-2 stubs (D-10) --
-        SocketCommand::NotImplemented { req_id, method, resp_tx } => {
-            let _ = resp_tx.send(err(req_id, "not_implemented", &format!("{method} is not implemented")));
+        SocketCommand::NotImplemented {
+            req_id,
+            method,
+            resp_tx,
+        } => {
+            let _ = resp_tx.send(err(
+                req_id,
+                "not_implemented",
+                &format!("{method} is not implemented"),
+            ));
         }
     }
 }

@@ -21,8 +21,7 @@ pub fn log_dir() -> std::path::PathBuf {
     std::env::var("XDG_STATE_HOME")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| {
-            std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
-                .join(".local/state")
+            std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".local/state")
         })
         .join("cmux")
         .join("logs")

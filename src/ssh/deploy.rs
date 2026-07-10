@@ -4,11 +4,10 @@ use tokio::process::Command;
 /// Path to the pre-compiled cmuxd-remote binary.
 /// Looks in: ~/.local/share/cmux/bin/cmuxd-remote-linux-amd64
 pub fn local_daemon_path() -> PathBuf {
-    let data_dir = std::env::var("XDG_DATA_HOME")
-        .unwrap_or_else(|_| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-            format!("{home}/.local/share")
-        });
+    let data_dir = std::env::var("XDG_DATA_HOME").unwrap_or_else(|_| {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        format!("{home}/.local/share")
+    });
     PathBuf::from(data_dir).join("cmux/bin/cmuxd-remote-linux-amd64")
 }
 

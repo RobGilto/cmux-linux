@@ -23,7 +23,8 @@ pub fn parse_ssh_config_hosts(content: &str) -> Vec<String> {
     let mut hosts = Vec::new();
     for line in content.lines() {
         let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("Host ")
+        if let Some(rest) = trimmed
+            .strip_prefix("Host ")
             .or_else(|| trimmed.strip_prefix("Host\t"))
         {
             for host in rest.split_whitespace() {
@@ -165,12 +166,18 @@ mod tests {
 
     #[test]
     fn test_workspace_name_user_at_host() {
-        assert_eq!(workspace_name_from_target("user@host.example.com"), "host.example.com");
+        assert_eq!(
+            workspace_name_from_target("user@host.example.com"),
+            "host.example.com"
+        );
     }
 
     #[test]
     fn test_workspace_name_host_only() {
-        assert_eq!(workspace_name_from_target("host.example.com"), "host.example.com");
+        assert_eq!(
+            workspace_name_from_target("host.example.com"),
+            "host.example.com"
+        );
     }
 
     #[test]

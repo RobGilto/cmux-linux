@@ -42,15 +42,15 @@ pub fn format_workspace_list(result: &Value, color: bool) -> String {
     }
     let mut lines = Vec::new();
     for (i, ws) in workspaces.iter().enumerate() {
-        let selected = ws.get("selected").and_then(|v| v.as_bool()).unwrap_or(false);
+        let selected = ws
+            .get("selected")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let title = ws
             .get("title")
             .and_then(|v| v.as_str())
             .unwrap_or("untitled");
-        let pane_count = ws
-            .get("pane_count")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
+        let pane_count = ws.get("pane_count").and_then(|v| v.as_u64()).unwrap_or(0);
         let marker = if selected { "*" } else { " " };
         let line = format!(
             "{} {}: {} ({} pane{})",
@@ -93,10 +93,7 @@ pub fn format_surface_list(result: &Value, color: bool) -> String {
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
         let id_short = &id[..id.len().min(8)];
-        let title = surface
-            .get("title")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let title = surface.get("title").and_then(|v| v.as_str()).unwrap_or("");
         let marker = if focused { "*" } else { " " };
         let line = if title.is_empty() {
             format!("{} {}", marker, id_short)
@@ -224,7 +221,10 @@ fn format_agent_list(result: &Value, _color: bool) -> String {
         let provider = s.get("provider").and_then(|v| v.as_str()).unwrap_or("?");
         let uuid = s.get("surface_uuid").and_then(|v| v.as_str()).unwrap_or("");
         let uuid_short = &uuid[..uuid.len().min(8)];
-        let ws = s.get("workspace_name").and_then(|v| v.as_str()).unwrap_or("");
+        let ws = s
+            .get("workspace_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         let sid = s.get("session_id").and_then(|v| v.as_str());
         let resume = match sid {
             Some(id) => format!("session {} (resumable)", id),
@@ -278,10 +278,7 @@ fn format_notification_list(result: &Value, color: bool) -> String {
 
 /// Format a mutation command result with a success message.
 pub fn format_mutation(command_name: &str, result: &Value) -> String {
-    let id = result
-        .get("id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let id = result.get("id").and_then(|v| v.as_str()).unwrap_or("");
     let title = result
         .get("title")
         .or_else(|| result.get("name"))
@@ -298,10 +295,7 @@ pub fn format_mutation(command_name: &str, result: &Value) -> String {
         }
         "workspace.close" => format!("Closed workspace: {}", id),
         "workspace.rename" => {
-            let name = result
-                .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or(title);
+            let name = result.get("name").and_then(|v| v.as_str()).unwrap_or(title);
             format!("Renamed workspace {} to: {}", id, name)
         }
         "surface.split" => format!("Split created: {}", id),
@@ -326,10 +320,7 @@ pub fn format_response(method: &str, result: &Value, json_mode: bool, color: boo
                 .get("title")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown");
-            let id = result
-                .get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let id = result.get("id").and_then(|v| v.as_str()).unwrap_or("");
             format!("{} ({})", title, id)
         }
         "surface.list" => format_surface_list(result, color),
@@ -342,13 +333,11 @@ pub fn format_response(method: &str, result: &Value, json_mode: bool, color: boo
                 .unwrap_or("unknown");
             title.to_string()
         }
-        "system.ping" => {
-            result
-                .get("message")
-                .and_then(|v| v.as_str())
-                .unwrap_or("pong")
-                .to_string()
-        }
+        "system.ping" => result
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("pong")
+            .to_string(),
         "system.identify" => format_identify(result),
         "system.capabilities" => format_capabilities(result, color),
         "notification.list" => format_notification_list(result, color),
@@ -401,13 +390,22 @@ pub fn format_browser_list(result: &Value, _color: bool) -> String {
         return "No browser surfaces".to_string();
     }
     let mut lines = Vec::new();
-    lines.push(format!("{:<12} {:<38} {:<50} {}", "REF", "UUID", "URL", "STATUS"));
+    lines.push(format!(
+        "{:<12} {:<38} {:<50} {}",
+        "REF", "UUID", "URL", "STATUS"
+    ));
     for s in surfaces {
         let ref_str = s.get("ref").and_then(|v| v.as_str()).unwrap_or("-");
         let uuid = s.get("uuid").and_then(|v| v.as_str()).unwrap_or("-");
         let url = s.get("url").and_then(|v| v.as_str()).unwrap_or("-");
-        let status = s.get("status").and_then(|v| v.as_str()).unwrap_or("unknown");
-        lines.push(format!("{:<12} {:<38} {:<50} {}", ref_str, uuid, url, status));
+        let status = s
+            .get("status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        lines.push(format!(
+            "{:<12} {:<38} {:<50} {}",
+            ref_str, uuid, url, status
+        ));
     }
     lines.join("\n")
 }

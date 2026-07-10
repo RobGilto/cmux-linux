@@ -39,9 +39,11 @@ pub struct AppState {
     /// Handles to SSH lifecycle tasks, keyed by workspace id. Used for cleanup on close.
     pub ssh_task_handles: std::collections::HashMap<u64, tokio::task::JoinHandle<()>>,
     /// Maps pane_id -> IoWriteContext for remote panes (needed to set stream_id after proxy.open).
-    pub remote_pane_contexts: std::collections::HashMap<u64, std::sync::Arc<crate::ssh::bridge::IoWriteContext>>,
+    pub remote_pane_contexts:
+        std::collections::HashMap<u64, std::sync::Arc<crate::ssh::bridge::IoWriteContext>>,
     /// Maps workspace_id -> SshBridge for remote workspaces.
-    pub workspace_bridges: std::collections::HashMap<u64, std::sync::Arc<crate::ssh::bridge::SshBridge>>,
+    pub workspace_bridges:
+        std::collections::HashMap<u64, std::sync::Arc<crate::ssh::bridge::SshBridge>>,
     /// Browser preview daemon manager (Phase 8).
     pub browser_manager: Option<crate::browser::BrowserManager>,
     /// Optional Chromium binary path override read from
@@ -121,10 +123,17 @@ impl AppState {
         let pane_id = id * 1000;
         tracing::debug!(
             "cmux: create_workspace calling create_surface for workspace_id={}, pane_id={}",
-            id, pane_id
+            id,
+            pane_id
         );
-        let (gl_area, surface_cell) =
-            crate::ghostty::surface::create_surface(&self.gtk_app, self.ghostty_app, None, pane_id, crate::ghostty::surface::SurfaceIoMode::Exec, cwd);
+        let (gl_area, surface_cell) = crate::ghostty::surface::create_surface(
+            &self.gtk_app,
+            self.ghostty_app,
+            None,
+            pane_id,
+            crate::ghostty::surface::SurfaceIoMode::Exec,
+            cwd,
+        );
         let engine = SplitEngine::new(
             self.gtk_app.clone(),
             self.ghostty_app,
@@ -173,7 +182,9 @@ impl AppState {
 
         let row = gtk4::ListBoxRow::new();
         row.set_child(Some(&hbox));
-        unsafe { row.set_data("workspace-id", id); }
+        unsafe {
+            row.set_data("workspace-id", id);
+        }
         self.sidebar_list.append(&row);
 
         // Build split tree from session data (D-05)
@@ -186,7 +197,8 @@ impl AppState {
 
         // Add to stack
         let page_name = format!("workspace-{}", id);
-        self.stack.add_named(&engine.root_widget(), Some(&page_name));
+        self.stack
+            .add_named(&engine.root_widget(), Some(&page_name));
         workspace.stack_page_name = page_name;
 
         self.workspaces.push(workspace);
@@ -255,14 +267,19 @@ impl AppState {
             // Invariant: build_ui() sets ssh_event_tx before any signal
             // handler that can reach this runs — enforced at startup.
             #[allow(clippy::expect_used)]
-            ssh_tx: self.ssh_event_tx.clone().expect("ssh_event_tx must be set before creating remote workspaces"),
+            ssh_tx: self
+                .ssh_event_tx
+                .clone()
+                .expect("ssh_event_tx must be set before creating remote workspaces"),
         });
         let (gl_area, surface_cell) = crate::ghostty::surface::create_surface(
             &self.gtk_app,
             self.ghostty_app,
             None,
             pane_id,
-            crate::ghostty::surface::SurfaceIoMode::Manual { io_write_ctx: io_ctx.clone() },
+            crate::ghostty::surface::SurfaceIoMode::Manual {
+                io_write_ctx: io_ctx.clone(),
+            },
             None,
         );
         let engine = SplitEngine::new(
@@ -469,11 +486,14 @@ impl AppState {
                 self.update_sidebar_attention(idx);
 
                 // Desktop notification when window is unfocused (NOTF-03)
-                let window_focused = self.gtk_app.active_window()
+                let window_focused = self
+                    .gtk_app
+                    .active_window()
                     .map(|w| w.is_active())
                     .unwrap_or(false);
                 if !window_focused && self.workspaces[idx].has_attention {
-                    let should_notify = self.workspaces[idx].last_notification
+                    let should_notify = self.workspaces[idx]
+                        .last_notification
                         .map(|t| t.elapsed() >= std::time::Duration::from_secs(5))
                         .unwrap_or(true);
                     if should_notify {
@@ -500,7 +520,9 @@ impl AppState {
     /// Update the sidebar dot visibility for workspace at `index`.
     pub(crate) fn update_sidebar_attention(&self, index: usize) {
         if let Some(row) = self.sidebar_list.row_at_index(index as i32) {
-            let has_attention = self.workspaces.get(index)
+            let has_attention = self
+                .workspaces
+                .get(index)
                 .map(|ws| ws.has_attention)
                 .unwrap_or(false);
             // Row layout: GtkBox(H) > [GtkBox(V) > [GtkLabel(name)], GtkLabel(dot)]
@@ -548,35 +570,40 @@ impl AppState {
                 let session = crate::session::SessionData {
                     version: 2, // D-01: bump to version 2 for full tree serialization
                     active_index: self.active_index,
-                    workspaces: self.workspaces.iter().enumerate().map(|(i, ws)| {
-                        // D-02: save full split tree for ALL workspaces
-                        let layout = if i < self.split_engines.len() {
-                            self.split_engines[i].root.to_data()
-                        } else {
-                            // Fallback: shouldn't happen, but be safe
-                            crate::split_engine::SplitNodeData::Leaf {
-                                pane_id: 0,
-                                surface_uuid: uuid::Uuid::nil(),
-                                shell: String::new(),
-                                cwd: String::new(),
-                                agent_provider: None,
-                                agent_session_id: None,
+                    workspaces: self
+                        .workspaces
+                        .iter()
+                        .enumerate()
+                        .map(|(i, ws)| {
+                            // D-02: save full split tree for ALL workspaces
+                            let layout = if i < self.split_engines.len() {
+                                self.split_engines[i].root.to_data()
+                            } else {
+                                // Fallback: shouldn't happen, but be safe
+                                crate::split_engine::SplitNodeData::Leaf {
+                                    pane_id: 0,
+                                    surface_uuid: uuid::Uuid::nil(),
+                                    shell: String::new(),
+                                    cwd: String::new(),
+                                    agent_provider: None,
+                                    agent_session_id: None,
+                                }
+                            };
+                            // D-04: save active_pane_uuid per workspace
+                            let active_pane_uuid = if i < self.split_engines.len() {
+                                self.split_engines[i].active_pane_uuid()
+                            } else {
+                                None
+                            };
+                            crate::session::WorkspaceSession {
+                                uuid: ws.uuid.to_string(),
+                                name: ws.name.clone(),
+                                active_pane_uuid,
+                                layout,
+                                group: ws.group.clone(),
                             }
-                        };
-                        // D-04: save active_pane_uuid per workspace
-                        let active_pane_uuid = if i < self.split_engines.len() {
-                            self.split_engines[i].active_pane_uuid()
-                        } else {
-                            None
-                        };
-                        crate::session::WorkspaceSession {
-                            uuid: ws.uuid.to_string(),
-                            name: ws.name.clone(),
-                            active_pane_uuid,
-                            layout,
-                            group: ws.group.clone(),
-                        }
-                    }).collect(),
+                        })
+                        .collect(),
                 };
                 // Tee the snapshot for the panic hook before the debounced
                 // disk write — a crash inside the 500ms window must not

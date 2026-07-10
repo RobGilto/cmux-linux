@@ -122,7 +122,11 @@ pub fn start_inline_rename(
                 state.borrow_mut().rename_active(trimmed.clone());
             }
             // Restore Phase 4 nested layout: hbox > [vbox > [label], dot, close_btn]
-            let display = if trimmed.is_empty() { &new_name } else { &trimmed };
+            let display = if trimmed.is_empty() {
+                &new_name
+            } else {
+                &trimmed
+            };
             row.set_child(Some(&rebuild_sidebar_row_content(display)));
         }
     });
@@ -138,7 +142,11 @@ pub fn start_inline_rename(
                 if !trimmed.is_empty() {
                     state.borrow_mut().rename_active(trimmed.clone());
                 }
-                let display = if trimmed.is_empty() { &new_name } else { &trimmed };
+                let display = if trimmed.is_empty() {
+                    &new_name
+                } else {
+                    &trimmed
+                };
                 row_clone.set_child(Some(&rebuild_sidebar_row_content(display)));
             }
         }
@@ -249,7 +257,9 @@ fn row_status_widgets(
 
 /// Set (or clear, with an empty state) the colored status pill on a row.
 pub fn set_row_status(row: &gtk4::ListBoxRow, state: &str, color: &str) {
-    let Some((pill, _, _)) = row_status_widgets(row) else { return };
+    let Some((pill, _, _)) = row_status_widgets(row) else {
+        return;
+    };
     if state.is_empty() {
         pill.set_visible(false);
         return;
@@ -265,7 +275,9 @@ pub fn set_row_status(row: &gtk4::ListBoxRow, state: &str, color: &str) {
 
 /// Set (or clear, with a negative value) the progress bar on a row.
 pub fn set_row_progress(row: &gtk4::ListBoxRow, value: f64, label: Option<&str>) {
-    let Some((_, progress, _)) = row_status_widgets(row) else { return };
+    let Some((_, progress, _)) = row_status_widgets(row) else {
+        return;
+    };
     if value < 0.0 {
         progress.set_visible(false);
         return;
@@ -277,7 +289,9 @@ pub fn set_row_progress(row: &gtk4::ListBoxRow, value: f64, label: Option<&str>)
 
 /// Set (or clear, with an empty message) the one-line log label on a row.
 pub fn set_row_log(row: &gtk4::ListBoxRow, message: &str) {
-    let Some((_, _, log)) = row_status_widgets(row) else { return };
+    let Some((_, _, log)) = row_status_widgets(row) else {
+        return;
+    };
     if message.is_empty() {
         log.set_visible(false);
         return;
@@ -339,9 +353,7 @@ pub fn attach_sidebar_context_menu(
             // Switch to this workspace first so context menu actions apply to it
             let index = row.index() as usize;
             state.borrow_mut().switch_to_index(index);
-            popover.set_pointing_to(Some(&gtk4::gdk::Rectangle::new(
-                x as i32, y as i32, 1, 1,
-            )));
+            popover.set_pointing_to(Some(&gtk4::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
             popover.popup();
         }
     });

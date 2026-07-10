@@ -6,29 +6,29 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 use gtk4::prelude::*;
-use gtk4::{Application, ApplicationWindow, gio, CssProvider, StyleContext};
+use gtk4::{gio, Application, ApplicationWindow, CssProvider, StyleContext};
 use std::ffi::CString;
 
-mod ghostty;
-mod logging;
-mod platform;
-mod procstat;
-mod workspace;
-mod split_engine;
-mod app_state;
-mod sidebar;
-mod shortcuts;
-mod socket;
-mod session;
 mod agent;
-mod ssh;
-mod config;
+mod app_state;
 mod browser;
 mod browser_settings;
-mod menus;
+mod config;
+mod ghostty;
 mod header_bar;
-mod ssh_hosts;
+mod logging;
+mod menus;
+mod platform;
+mod procstat;
+mod session;
+mod shortcuts;
+mod sidebar;
+mod socket;
+mod split_engine;
+mod ssh;
 mod ssh_dialog;
+mod ssh_hosts;
+mod workspace;
 
 /// freedesktop application ID. MUST match the basename of the .desktop and
 /// metainfo files shipped under packaging/desktop/, otherwise GNOME/KDE will
@@ -133,8 +133,7 @@ fn main() {
     // Tokio runtime for socket I/O (kept alive for app lifetime).
     // Startup-fatal: with no runtime there is no socket server and no app.
     #[allow(clippy::expect_used)]
-    let runtime = tokio::runtime::Runtime::new()
-        .expect("Failed to create tokio runtime");
+    let runtime = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
     let runtime_handle = runtime.handle().clone();
 
     // glib::MainContext::channel pattern: event-driven bridge from tokio to GTK main thread.
@@ -142,7 +141,8 @@ fn main() {
     // using tokio::sync::mpsc::unbounded_channel + glib::MainContext::default().spawn_local()
     // in build_ui. The Sender is Send+Clone — tokio tasks hold it. The Receiver is consumed by
     // a spawn_local future that processes commands on the GTK main thread.
-    let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel::<crate::socket::commands::SocketCommand>();
+    let (cmd_tx, cmd_rx) =
+        tokio::sync::mpsc::unbounded_channel::<crate::socket::commands::SocketCommand>();
 
     let app = Application::builder()
         .application_id(APP_ID)
@@ -168,12 +168,16 @@ fn main() {
         crate::session::load_session()
     };
     if let Some(ref s) = saved_session {
-        tracing::debug!("cmux: restoring session ({} workspace(s))", s.workspaces.len());
+        tracing::debug!(
+            "cmux: restoring session ({} workspace(s))",
+            s.workspaces.len()
+        );
     }
 
     // Session save infrastructure: Notify for debounce, channel for session snapshots.
     let save_notify = std::sync::Arc::new(tokio::sync::Notify::new());
-    let (session_tx, session_rx) = tokio::sync::mpsc::unbounded_channel::<crate::session::SessionData>();
+    let (session_tx, session_rx) =
+        tokio::sync::mpsc::unbounded_channel::<crate::session::SessionData>();
 
     // Spawn debounce task in tokio. Waits for notify, debounces 500ms, then writes
     // the latest session snapshot to disk atomically (SESS-01, SESS-03).
@@ -214,11 +218,7 @@ fn main() {
             // GTK may emit activate more than once (e.g. repeat launches of a
             // NON_UNIQUE app); the receiver is consumable exactly once, so
             // later activations are ignored instead of panicking.
-            let Some(rx) = cmd_rx
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .take()
-            else {
+            let Some(rx) = cmd_rx.lock().unwrap_or_else(|p| p.into_inner()).take() else {
                 tracing::debug!("cmux: ignoring repeat activate signal");
                 return;
             };
@@ -228,7 +228,17 @@ fn main() {
                 .take()
                 .flatten();
             let smap = crate::config::ShortcutMap::from_config(&config.shortcuts);
-            build_ui(app, runtime_handle.clone(), cmd_tx.clone(), rx, save_notify.clone(), session_tx.clone(), session, smap, &config);
+            build_ui(
+                app,
+                runtime_handle.clone(),
+                cmd_tx.clone(),
+                rx,
+                save_notify.clone(),
+                session_tx.clone(),
+                session,
+                smap,
+                &config,
+            );
         }
     });
 
@@ -255,8 +265,8 @@ fn build_ui(
 ) {
     // 1. Initialize Ghostty once
     let ghostty_app = unsafe {
-        use crate::ghostty::ffi;
         use crate::ghostty::callbacks::APP_PTR;
+        use crate::ghostty::ffi;
         use std::sync::atomic::Ordering;
 
         let argv: Vec<CString> = std::env::args()
@@ -318,8 +328,7 @@ fn build_ui(
     // point in the app lifecycle (theme reload, settings refresh, etc.).
     {
         use gtk4::prelude::*;
-        let adwaita_index =
-            std::path::PathBuf::from("/usr/share/icons/Adwaita/index.theme");
+        let adwaita_index = std::path::PathBuf::from("/usr/share/icons/Adwaita/index.theme");
         if adwaita_index.exists() {
             let settings = gtk4::Settings::for_display(&display);
             settings.set_gtk_icon_theme_name(Some("Adwaita"));
@@ -335,9 +344,8 @@ fn build_ui(
                     search_path.push(p);
                 }
             }
-            icon_theme.set_search_path(
-                &search_path.iter().map(|p| p.as_path()).collect::<Vec<_>>(),
-            );
+            icon_theme
+                .set_search_path(&search_path.iter().map(|p| p.as_path()).collect::<Vec<_>>());
             icon_theme.set_theme_name(Some("Adwaita"));
         }
     }
@@ -386,7 +394,8 @@ fn build_ui(
     crate::sidebar::wire_sidebar_clicks(&sidebar_list, state.clone());
 
     // Set save_notify, session_tx, and SSH event channel on AppState.
-    let (ssh_event_tx, mut ssh_event_rx) = tokio::sync::mpsc::unbounded_channel::<crate::ssh::SshEvent>();
+    let (ssh_event_tx, mut ssh_event_rx) =
+        tokio::sync::mpsc::unbounded_channel::<crate::ssh::SshEvent>();
     {
         let mut s = state.borrow_mut();
         s.save_notify = Some(save_notify);
@@ -397,8 +406,7 @@ fn build_ui(
 
     // Restore session if available (SESS-02), otherwise create default workspace.
     {
-        let session_with_workspaces =
-            saved_session.filter(|s| !s.workspaces.is_empty());
+        let session_with_workspaces = saved_session.filter(|s| !s.workspaces.is_empty());
         if let Some(session) = session_with_workspaces {
             if session.version >= 2 {
                 // Version 2: full tree restore (D-05)
@@ -408,12 +416,18 @@ fn build_ui(
                         restored_count += 1;
                     } else {
                         // D-15: tree invalid or too deep, fall back to single pane
-                        tracing::warn!("cmux: workspace '{}' tree invalid, creating default", ws_session.name);
+                        tracing::warn!(
+                            "cmux: workspace '{}' tree invalid, creating default",
+                            ws_session.name
+                        );
                         state.borrow_mut().create_workspace();
                         state.borrow_mut().rename_active(ws_session.name.clone());
                     }
                 }
-                tracing::debug!("cmux: restored {} workspaces from v2 session", restored_count);
+                tracing::debug!(
+                    "cmux: restored {} workspaces from v2 session",
+                    restored_count
+                );
             } else {
                 // Version 1: name-only restore (auto-upgrade on next save per D-01)
                 for ws_session in &session.workspaces {
@@ -496,8 +510,11 @@ fn build_ui(
         let state = state.clone();
         glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
             // Process bell notifications
-            if crate::ghostty::callbacks::BELL_PENDING.swap(false, std::sync::atomic::Ordering::SeqCst) {
-                let pane_id = crate::ghostty::callbacks::BELL_PANE_ID.load(std::sync::atomic::Ordering::SeqCst);
+            if crate::ghostty::callbacks::BELL_PENDING
+                .swap(false, std::sync::atomic::Ordering::SeqCst)
+            {
+                let pane_id = crate::ghostty::callbacks::BELL_PANE_ID
+                    .load(std::sync::atomic::Ordering::SeqCst);
                 if pane_id != 0 {
                     state.borrow_mut().set_pane_attention(pane_id);
                     // Publish to `cmux events` subscribers (reactive orchestration).
@@ -549,9 +566,11 @@ fn build_ui(
                                     })
                                 })
                             })
-                            .unwrap_or_else(|| serde_json::json!({
-                                "pane_id": pane_id, "title": title,
-                            }))
+                            .unwrap_or_else(|| {
+                                serde_json::json!({
+                                    "pane_id": pane_id, "title": title,
+                                })
+                            })
                     };
                     crate::socket::events::emit("surface.title", payload);
                 }
@@ -559,22 +578,31 @@ fn build_ui(
             // Process SSH events
             while let Ok(event) = ssh_event_rx.try_recv() {
                 match event {
-                    crate::ssh::SshEvent::StateChanged { workspace_id, state: conn_state } => {
+                    crate::ssh::SshEvent::StateChanged {
+                        workspace_id,
+                        state: conn_state,
+                    } => {
                         // Auto-save host on successful connection (D-04)
                         if conn_state == crate::workspace::ConnectionState::Connected {
-                            let remote_target = state.borrow().workspaces.iter()
+                            let remote_target = state
+                                .borrow()
+                                .workspaces
+                                .iter()
                                 .find(|ws| ws.id == workspace_id)
                                 .and_then(|ws| ws.remote_target.clone());
                             if let Some(target) = remote_target {
                                 crate::ssh_hosts::save_host(&target);
                             }
                         }
-                        state.borrow_mut().update_connection_state(workspace_id, conn_state);
+                        state
+                            .borrow_mut()
+                            .update_connection_state(workspace_id, conn_state);
                     }
                     crate::ssh::SshEvent::RemoteOutput { pane_id, data } => {
                         // Dispatch remote output to the Ghostty surface via process_output.
                         if let Ok(registry) = crate::ghostty::callbacks::SURFACE_REGISTRY.lock() {
-                            let surface_ptr = registry.iter()
+                            let surface_ptr = registry
+                                .iter()
                                 .find(|(_, &pid)| pid == pane_id)
                                 .map(|(&sptr, _)| sptr as crate::ghostty::ffi::ghostty_surface_t);
                             if let Some(surface) = surface_ptr {
@@ -586,11 +614,16 @@ fn build_ui(
                                     );
                                 }
                                 // Queue render for the GLArea associated with this surface
-                                if let Ok(gl_areas) = crate::ghostty::callbacks::GL_TO_SURFACE.lock() {
+                                if let Ok(gl_areas) =
+                                    crate::ghostty::callbacks::GL_TO_SURFACE.lock()
+                                {
                                     for (&gl_ptr, &s_ptr) in gl_areas.iter() {
                                         if s_ptr == surface as usize {
-                                            let area: glib::translate::Borrowed<gtk4::GLArea> =
-                                                unsafe { glib::translate::from_glib_borrow(gl_ptr as *mut gtk4::ffi::GtkGLArea) };
+                                            let area: glib::translate::Borrowed<gtk4::GLArea> = unsafe {
+                                                glib::translate::from_glib_borrow(
+                                                    gl_ptr as *mut gtk4::ffi::GtkGLArea,
+                                                )
+                                            };
                                             area.queue_render();
                                             break;
                                         }
@@ -602,7 +635,8 @@ fn build_ui(
                     crate::ssh::SshEvent::RemoteEof { pane_id } => {
                         // D-08: write exit message to surface, keep pane open for user to close
                         if let Ok(registry) = crate::ghostty::callbacks::SURFACE_REGISTRY.lock() {
-                            let surface_ptr = registry.iter()
+                            let surface_ptr = registry
+                                .iter()
                                 .find(|(_, &pid)| pid == pane_id)
                                 .map(|(&sptr, _)| sptr as crate::ghostty::ffi::ghostty_surface_t);
                             if let Some(surface) = surface_ptr {
@@ -621,14 +655,17 @@ fn build_ui(
                             if let Ok(mut sid) = ctx.stream_id.lock() {
                                 *sid = None;
                             }
-                            ctx.eof_received.store(true, std::sync::atomic::Ordering::Relaxed);
+                            ctx.eof_received
+                                .store(true, std::sync::atomic::Ordering::Relaxed);
                         }
                     }
                     crate::ssh::SshEvent::ClosePaneRequest { pane_id } => {
                         // Find the workspace containing this pane and close it
-                        let ws_index = state.borrow().workspaces.iter().position(|ws| {
-                            ws.id * 1000 == pane_id
-                        });
+                        let ws_index = state
+                            .borrow()
+                            .workspaces
+                            .iter()
+                            .position(|ws| ws.id * 1000 == pane_id);
                         if let Some(idx) = ws_index {
                             state.borrow_mut().close_workspace(idx);
                         }

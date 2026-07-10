@@ -29,9 +29,8 @@ pub fn discover_socket() -> Option<String> {
     }
 
     // 2. $XDG_RUNTIME_DIR/cmux/cmux.sock (fallback /run/user/{uid}/cmux/cmux.sock)
-    let xdg_base = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| {
-        format!("/run/user/{}", unsafe { libc::getuid() })
-    });
+    let xdg_base = std::env::var("XDG_RUNTIME_DIR")
+        .unwrap_or_else(|_| format!("/run/user/{}", unsafe { libc::getuid() }));
     let xdg_socket = format!("{}/cmux/cmux.sock", xdg_base);
     if Path::new(&xdg_socket).exists() {
         return Some(xdg_socket);

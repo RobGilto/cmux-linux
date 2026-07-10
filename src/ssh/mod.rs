@@ -17,10 +17,7 @@ pub enum SshEvent {
     /// Remote shell exited (proxy.stream.eof).
     RemoteEof { pane_id: u64 },
     /// Stream opened successfully -- pane can start receiving I/O.
-    StreamOpened {
-        pane_id: u64,
-        stream_id: String,
-    },
+    StreamOpened { pane_id: u64, stream_id: String },
     /// User pressed a key after remote shell exited -- close the pane/workspace.
     ClosePaneRequest { pane_id: u64 },
 }

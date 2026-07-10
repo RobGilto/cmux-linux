@@ -327,7 +327,6 @@ pub enum Commands {
     /// Browser automation (agent primary interface)
     #[command(subcommand)]
     Browser(BrowserCommand),
-
 }
 
 /// `cmux hooks <action>` — manage agent session-capture hooks.
@@ -544,7 +543,12 @@ pub enum BrowserCommand {
 /// Run the CLI with the parsed arguments.
 pub fn run(cli: Cli) -> Result<(), CliError> {
     // Launch is handled before socket resolution: there is no socket yet.
-    if let Commands::Launch { fresh, wait_secs, ref app_path } = cli.command {
+    if let Commands::Launch {
+        fresh,
+        wait_secs,
+        ref app_path,
+    } = cli.command
+    {
         return run_launch(&cli, fresh, wait_secs, app_path.as_deref());
     }
 
@@ -553,9 +557,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         path.clone()
     } else {
         discovery::discover_socket().ok_or_else(|| {
-            CliError::ConnectionError(
-                "no cmux socket found (is cmux-app running?)".into(),
-            )
+            CliError::ConnectionError("no cmux socket found (is cmux-app running?)".into())
         })?
     };
 
@@ -564,14 +566,15 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         Commands::Browser(BrowserCommand::Wait { timeout_ms, .. }) => {
             Duration::from_millis(timeout_ms + 5000)
         }
-        Commands::WaitFor { signal: false, timeout, .. } => {
-            Duration::from_secs(timeout + 5)
-        }
+        Commands::WaitFor {
+            signal: false,
+            timeout,
+            ..
+        } => Duration::from_secs(timeout + 5),
         _ => Duration::from_secs(5),
     };
 
-    let mut client =
-        socket_client::SocketClient::connect(&socket_path, timeout)?;
+    let mut client = socket_client::SocketClient::connect(&socket_path, timeout)?;
 
     if cli.verbose {
         eprintln!("Connected to {}", socket_path);
@@ -611,7 +614,12 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
 
     // Handle Events separately: it streams newline-delimited JSON until the
     // server closes the connection (--limit) or the pipe breaks.
-    if let Commands::Events { ref name, limit, no_heartbeat } = cli.command {
+    if let Commands::Events {
+        ref name,
+        limit,
+        no_heartbeat,
+    } = cli.command
+    {
         let mut params = serde_json::Map::new();
         if let Some(ref n) = name {
             params.insert("name".into(), serde_json::json!(n));
@@ -639,8 +647,11 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
             .cloned()
             .unwrap_or_default();
         rows.sort_by(|a, b| {
-            let cpu = |r: &serde_json::Value| r.get("cpu_secs").and_then(|v| v.as_f64()).unwrap_or(-1.0);
-            cpu(b).partial_cmp(&cpu(a)).unwrap_or(std::cmp::Ordering::Equal)
+            let cpu =
+                |r: &serde_json::Value| r.get("cpu_secs").and_then(|v| v.as_f64()).unwrap_or(-1.0);
+            cpu(b)
+                .partial_cmp(&cpu(a))
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         match format.as_str() {
             "json" => println!("{}", serde_json::json!({"top": rows})),
@@ -648,12 +659,21 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
                 let sep = if fmt == "tsv" { "\t" } else { "  " };
                 println!("SURFACE{sep}WORKSPACE{sep}PID{sep}CPU_SECS{sep}RSS_MB{sep}CMDLINE");
                 for r in &rows {
-                    let g = |k: &str| r.get(k).map(|v| v.to_string().trim_matches('"').to_string()).unwrap_or_default();
-                    let rss_mb = r.get("rss_bytes").and_then(|v| v.as_u64()).unwrap_or(0) / (1024 * 1024);
+                    let g = |k: &str| {
+                        r.get(k)
+                            .map(|v| v.to_string().trim_matches('"').to_string())
+                            .unwrap_or_default()
+                    };
+                    let rss_mb =
+                        r.get("rss_bytes").and_then(|v| v.as_u64()).unwrap_or(0) / (1024 * 1024);
                     println!(
                         "{}{sep}{}{sep}{}{sep}{}{sep}{}{sep}{}",
                         &g("surface")[..8.min(g("surface").len())],
-                        g("workspace"), g("pid"), g("cpu_secs"), rss_mb, g("cmdline"),
+                        g("workspace"),
+                        g("pid"),
+                        g("cpu_secs"),
+                        rss_mb,
+                        g("cmdline"),
                     );
                 }
             }
@@ -662,10 +682,13 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
     }
 
     // Handle Raw command separately (dynamic method name)
-    let (method_name, result) = if let Commands::Raw { ref method, ref params } = cli.command {
-        let params_val: serde_json::Value = serde_json::from_str(params).map_err(|e| {
-            CliError::ProtocolError(format!("invalid JSON params: {}", e))
-        })?;
+    let (method_name, result) = if let Commands::Raw {
+        ref method,
+        ref params,
+    } = cli.command
+    {
+        let params_val: serde_json::Value = serde_json::from_str(params)
+            .map_err(|e| CliError::ProtocolError(format!("invalid JSON params: {}", e)))?;
         let result = client.call(method, params_val)?;
         (method.clone(), result)
     } else {
@@ -726,11 +749,7 @@ fn run_launch(
         let path = socket_override
             .clone()
             .or_else(discovery::discover_socket)?;
-        let mut c = socket_client::SocketClient::connect(
-            &path,
-            Duration::from_secs(2),
-        )
-        .ok()?;
+        let mut c = socket_client::SocketClient::connect(&path, Duration::from_secs(2)).ok()?;
         c.call("system.ping", serde_json::json!({})).ok()?;
         Some(path)
     };
@@ -754,8 +773,7 @@ fn run_launch(
     let log_dir = std::env::var("XDG_STATE_HOME")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| {
-            std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
-                .join(".local/state")
+            std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".local/state")
         })
         .join("cmux");
     let _ = std::fs::create_dir_all(&log_dir);
@@ -791,18 +809,14 @@ fn run_launch(
         });
     }
     cmd.spawn().map_err(|e| {
-        CliError::ConnectionError(format!(
-            "failed to spawn {}: {e}",
-            app.display()
-        ))
+        CliError::ConnectionError(format!("failed to spawn {}: {e}", app.display()))
     })?;
 
     if cli.verbose {
         eprintln!("Spawned {} (log: {})", app.display(), log_path.display());
     }
 
-    let deadline =
-        std::time::Instant::now() + Duration::from_secs(wait_secs.max(1));
+    let deadline = std::time::Instant::now() + Duration::from_secs(wait_secs.max(1));
     loop {
         if let Some(path) = try_ping(&cli.socket) {
             println!("cmux-app ready (socket: {path})");
@@ -832,64 +846,108 @@ fn browser_command_to_rpc(cmd: &BrowserCommand) -> (&'static str, serde_json::Va
             ("browser.open", json!({"url": url, "workspace": workspace}))
         }
         BrowserCommand::List => ("browser.list", json!({})),
-        BrowserCommand::Close { surface } => {
-            ("browser.close", json!({"surface_ref": surface}))
-        }
-        BrowserCommand::Snapshot { surface, interactive, compact, max_depth } => {
-            ("browser.snapshot", json!({
+        BrowserCommand::Close { surface } => ("browser.close", json!({"surface_ref": surface})),
+        BrowserCommand::Snapshot {
+            surface,
+            interactive,
+            compact,
+            max_depth,
+        } => (
+            "browser.snapshot",
+            json!({
                 "surface_ref": surface,
                 "interactive": interactive,
                 "compact": compact,
                 "max_depth": max_depth
-            }))
-        }
-        BrowserCommand::Click { surface, target, snapshot_after } => {
-            ("browser.click", json!({
+            }),
+        ),
+        BrowserCommand::Click {
+            surface,
+            target,
+            snapshot_after,
+        } => (
+            "browser.click",
+            json!({
                 "surface_ref": surface,
                 "target": target,
                 "snapshot_after": snapshot_after
-            }))
-        }
-        BrowserCommand::Fill { surface, target, text, snapshot_after } => {
-            ("browser.fill", json!({
+            }),
+        ),
+        BrowserCommand::Fill {
+            surface,
+            target,
+            text,
+            snapshot_after,
+        } => (
+            "browser.fill",
+            json!({
                 "surface_ref": surface,
                 "target": target,
                 "text": text,
                 "snapshot_after": snapshot_after
-            }))
-        }
-        BrowserCommand::BrowserType { surface, selector, text } => {
-            ("browser.type", json!({
+            }),
+        ),
+        BrowserCommand::BrowserType {
+            surface,
+            selector,
+            text,
+        } => (
+            "browser.type",
+            json!({
                 "surface_ref": surface,
                 "selector": selector,
                 "text": text
-            }))
-        }
+            }),
+        ),
         BrowserCommand::Press { surface, key } => {
             ("browser.press", json!({"surface_ref": surface, "key": key}))
         }
-        BrowserCommand::Hover { surface, selector } => {
-            ("browser.hover", json!({"surface_ref": surface, "selector": selector}))
-        }
-        BrowserCommand::Scroll { surface, direction, amount } => {
-            ("browser.scroll", json!({
+        BrowserCommand::Hover { surface, selector } => (
+            "browser.hover",
+            json!({"surface_ref": surface, "selector": selector}),
+        ),
+        BrowserCommand::Scroll {
+            surface,
+            direction,
+            amount,
+        } => (
+            "browser.scroll",
+            json!({
                 "surface_ref": surface,
                 "direction": direction,
                 "amount": amount
-            }))
-        }
-        BrowserCommand::Select { surface, selector, value } => {
-            ("browser.select", json!({
+            }),
+        ),
+        BrowserCommand::Select {
+            surface,
+            selector,
+            value,
+        } => (
+            "browser.select",
+            json!({
                 "surface_ref": surface,
                 "selector": selector,
                 "value": value
-            }))
-        }
-        BrowserCommand::Eval { surface, expression } => {
-            ("browser.eval", json!({"surface_ref": surface, "script": expression}))
-        }
-        BrowserCommand::Wait { surface, selector, text, url_contains, load_state, function, timeout_ms } => {
-            ("browser.wait", json!({
+            }),
+        ),
+        BrowserCommand::Eval {
+            surface,
+            expression,
+        } => (
+            "browser.eval",
+            json!({"surface_ref": surface, "script": expression}),
+        ),
+        BrowserCommand::Wait {
+            surface,
+            selector,
+            text,
+            url_contains,
+            load_state,
+            function,
+            timeout_ms,
+        } => (
+            "browser.wait",
+            json!({
                 "surface_ref": surface,
                 "selector": selector,
                 "text": text,
@@ -897,32 +955,24 @@ fn browser_command_to_rpc(cmd: &BrowserCommand) -> (&'static str, serde_json::Va
                 "load_state": load_state,
                 "function": function,
                 "timeout_ms": timeout_ms
-            }))
-        }
+            }),
+        ),
         BrowserCommand::Goto { surface, url } => {
             ("browser.goto", json!({"surface_ref": surface, "url": url}))
         }
-        BrowserCommand::Back { surface } => {
-            ("browser.back", json!({"surface_ref": surface}))
-        }
-        BrowserCommand::Forward { surface } => {
-            ("browser.forward", json!({"surface_ref": surface}))
-        }
-        BrowserCommand::Reload { surface } => {
-            ("browser.reload", json!({"surface_ref": surface}))
-        }
-        BrowserCommand::GetUrl { surface } => {
-            ("browser.url", json!({"surface_ref": surface}))
-        }
-        BrowserCommand::GetTitle { surface } => {
-            ("browser.title", json!({"surface_ref": surface}))
-        }
-        BrowserCommand::GetText { surface, selector } => {
-            ("browser.gettext", json!({"surface_ref": surface, "selector": selector}))
-        }
-        BrowserCommand::GetHtml { surface, selector } => {
-            ("browser.gethtml", json!({"surface_ref": surface, "selector": selector}))
-        }
+        BrowserCommand::Back { surface } => ("browser.back", json!({"surface_ref": surface})),
+        BrowserCommand::Forward { surface } => ("browser.forward", json!({"surface_ref": surface})),
+        BrowserCommand::Reload { surface } => ("browser.reload", json!({"surface_ref": surface})),
+        BrowserCommand::GetUrl { surface } => ("browser.url", json!({"surface_ref": surface})),
+        BrowserCommand::GetTitle { surface } => ("browser.title", json!({"surface_ref": surface})),
+        BrowserCommand::GetText { surface, selector } => (
+            "browser.gettext",
+            json!({"surface_ref": surface, "selector": selector}),
+        ),
+        BrowserCommand::GetHtml { surface, selector } => (
+            "browser.gethtml",
+            json!({"surface_ref": surface, "selector": selector}),
+        ),
         BrowserCommand::Screenshot { surface } => {
             ("browser.screenshot", json!({"surface_ref": surface}))
         }
@@ -939,12 +989,17 @@ fn command_to_rpc(cmd: &Commands) -> (&'static str, serde_json::Value) {
         // Launch never reaches RPC mapping — run() intercepts it first.
         Commands::Launch { .. } => unreachable!("launch handled in run()"),
         Commands::Ping => ("system.ping", json!({})),
-        Commands::WaitFor { name, signal: true, .. } => {
-            ("rendezvous.signal", json!({"name": name}))
-        }
-        Commands::WaitFor { name, signal: false, timeout } => {
-            ("rendezvous.wait", json!({"name": name, "timeout_ms": timeout * 1000}))
-        }
+        Commands::WaitFor {
+            name, signal: true, ..
+        } => ("rendezvous.signal", json!({"name": name})),
+        Commands::WaitFor {
+            name,
+            signal: false,
+            timeout,
+        } => (
+            "rendezvous.wait",
+            json!({"name": name, "timeout_ms": timeout * 1000}),
+        ),
         Commands::Top { .. } => ("surface.top", json!({})),
         Commands::Identify => ("system.identify", json!({})),
         Commands::Capabilities => ("system.capabilities", json!({})),
@@ -953,7 +1008,12 @@ fn command_to_rpc(cmd: &Commands) -> (&'static str, serde_json::Value) {
 
         Commands::Raw { .. } => unreachable!("Raw handled separately"),
 
-        Commands::NewWorkspace { name, cwd, layout, agent } => {
+        Commands::NewWorkspace {
+            name,
+            cwd,
+            layout,
+            agent,
+        } => {
             let mut p = serde_json::Map::new();
             if let Some(ref n) = name {
                 p.insert("name".into(), json!(n));
@@ -1010,7 +1070,11 @@ fn command_to_rpc(cmd: &Commands) -> (&'static str, serde_json::Value) {
         }
         Commands::ListGroups => ("workspace_group.list", json!({})),
         Commands::ListSurfaces => ("surface.list", json!({})),
-        Commands::Split { direction, id, agent } => {
+        Commands::Split {
+            direction,
+            id,
+            agent,
+        } => {
             let mut p = serde_json::Map::new();
             p.insert("direction".into(), json!(direction));
             if let Some(ref id) = id {
@@ -1081,14 +1145,16 @@ fn command_to_rpc(cmd: &Commands) -> (&'static str, serde_json::Value) {
         Commands::Type { text } => ("debug.type", json!({"text": text})),
 
         Commands::ListNotifications => ("notification.list", json!({})),
-        Commands::ClearNotification { id } => {
-            ("notification.clear", json!({"id": id}))
-        }
+        Commands::ClearNotification { id } => ("notification.clear", json!({"id": id})),
         Commands::Hooks(HooksCommand::Setup { .. }) => ("agent.hooks_setup", json!({})),
         Commands::AgentSessions => ("agent.list", json!({})),
         // Agent(ReportSession) is handled by a dedicated stdin path in run().
         Commands::Agent(AgentCommand::ReportSession) => ("agent.report_session", json!({})),
-        Commands::SetStatus { state, color, workspace } => {
+        Commands::SetStatus {
+            state,
+            color,
+            workspace,
+        } => {
             let mut p = serde_json::Map::new();
             p.insert("state".into(), json!(state));
             p.insert("color".into(), json!(color));
@@ -1097,7 +1163,11 @@ fn command_to_rpc(cmd: &Commands) -> (&'static str, serde_json::Value) {
             }
             ("workspace.set_status", Value::Object(p))
         }
-        Commands::SetProgress { value, label, workspace } => {
+        Commands::SetProgress {
+            value,
+            label,
+            workspace,
+        } => {
             let mut p = serde_json::Map::new();
             p.insert("value".into(), json!(value));
             if let Some(ref l) = label {
@@ -1116,7 +1186,12 @@ fn command_to_rpc(cmd: &Commands) -> (&'static str, serde_json::Value) {
             }
             ("workspace.log", Value::Object(p))
         }
-        Commands::Notify { title, body, workspace, no_desktop } => {
+        Commands::Notify {
+            title,
+            body,
+            workspace,
+            no_desktop,
+        } => {
             let mut p = serde_json::Map::new();
             p.insert("title".into(), json!(title));
             p.insert("body".into(), json!(body));

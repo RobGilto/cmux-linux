@@ -6,7 +6,11 @@ use std::os::unix::io::AsRawFd;
 /// Returns Err if getsockopt fails (connection rejected).
 pub fn validate_peer_uid(stream: &tokio::net::UnixStream) -> std::io::Result<bool> {
     let fd = stream.as_raw_fd();
-    let mut cred = libc::ucred { pid: 0, uid: 0, gid: 0 };
+    let mut cred = libc::ucred {
+        pid: 0,
+        uid: 0,
+        gid: 0,
+    };
     let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
     let ret = unsafe {
         libc::getsockopt(
@@ -33,10 +37,13 @@ mod tests {
     /// the getsockopt call works and returns Ok(true) for same-UID connections.
     #[test]
     fn test_peercred_rejection() {
-        let (a, _b) = std::os::unix::net::UnixStream::pair()
-            .expect("socketpair failed");
+        let (a, _b) = std::os::unix::net::UnixStream::pair().expect("socketpair failed");
         let fd = a.as_raw_fd();
-        let mut cred = libc::ucred { pid: 0, uid: 0, gid: 0 };
+        let mut cred = libc::ucred {
+            pid: 0,
+            uid: 0,
+            gid: 0,
+        };
         let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
         let ret = unsafe {
             libc::getsockopt(
@@ -49,6 +56,9 @@ mod tests {
         };
         assert_eq!(ret, 0, "getsockopt SO_PEERCRED failed");
         let expected_uid = unsafe { libc::getuid() };
-        assert_eq!(cred.uid, expected_uid, "socketpair peer uid must match self");
+        assert_eq!(
+            cred.uid, expected_uid,
+            "socketpair peer uid must match self"
+        );
     }
 }

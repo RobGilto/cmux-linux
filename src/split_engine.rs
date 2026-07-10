@@ -67,7 +67,9 @@ impl SplitNode {
                     None
                 }
             }
-            SplitNode::Preview { pane_id, container, .. } => {
+            SplitNode::Preview {
+                pane_id, container, ..
+            } => {
                 if container.has_css_class("active-pane") {
                     Some(*pane_id)
                 } else {
@@ -90,10 +92,9 @@ impl SplitNode {
                     None
                 }
             }
-            SplitNode::Split { start, end, .. } => {
-                start.find_uuid_for_pane(target_id)
-                    .or_else(|| end.find_uuid_for_pane(target_id))
-            }
+            SplitNode::Split { start, end, .. } => start
+                .find_uuid_for_pane(target_id)
+                .or_else(|| end.find_uuid_for_pane(target_id)),
         }
     }
 
@@ -110,7 +111,9 @@ impl SplitNode {
                     gl_area.remove_css_class("active-pane");
                 }
             }
-            SplitNode::Preview { pane_id, container, .. } => {
+            SplitNode::Preview {
+                pane_id, container, ..
+            } => {
                 if *pane_id == active_pane_id {
                     container.add_css_class("active-pane");
                 } else {
@@ -128,18 +131,24 @@ impl SplitNode {
     pub fn find_node(&self, target_id: u64) -> Option<&SplitNode> {
         match self {
             SplitNode::Leaf { pane_id, .. } | SplitNode::Preview { pane_id, .. } => {
-                if *pane_id == target_id { Some(self) } else { None }
+                if *pane_id == target_id {
+                    Some(self)
+                } else {
+                    None
+                }
             }
-            SplitNode::Split { start, end, .. } => {
-                start.find_node(target_id).or_else(|| end.find_node(target_id))
-            }
+            SplitNode::Split { start, end, .. } => start
+                .find_node(target_id)
+                .or_else(|| end.find_node(target_id)),
         }
     }
 
     /// Collect all leaf pane_ids into a Vec (for cleanup on workspace close).
     pub fn collect_pane_ids(&self, out: &mut Vec<u64>) {
         match self {
-            SplitNode::Leaf { pane_id, .. } | SplitNode::Preview { pane_id, .. } => out.push(*pane_id),
+            SplitNode::Leaf { pane_id, .. } | SplitNode::Preview { pane_id, .. } => {
+                out.push(*pane_id)
+            }
             SplitNode::Split { start, end, .. } => {
                 start.collect_pane_ids(out);
                 end.collect_pane_ids(out);
@@ -163,14 +172,19 @@ impl SplitNode {
     /// Used by debug.type to send text to a specific pane's surface.
     pub fn find_surface_for_pane(&self, target_id: u64) -> Option<ffi::ghostty_surface_t> {
         match self {
-            SplitNode::Leaf { pane_id, surface, .. } => {
-                if *pane_id == target_id { Some(*surface) } else { None }
+            SplitNode::Leaf {
+                pane_id, surface, ..
+            } => {
+                if *pane_id == target_id {
+                    Some(*surface)
+                } else {
+                    None
+                }
             }
             SplitNode::Preview { .. } => None, // No Ghostty surface
-            SplitNode::Split { start, end, .. } => {
-                start.find_surface_for_pane(target_id)
-                    .or_else(|| end.find_surface_for_pane(target_id))
-            }
+            SplitNode::Split { start, end, .. } => start
+                .find_surface_for_pane(target_id)
+                .or_else(|| end.find_surface_for_pane(target_id)),
         }
     }
 
@@ -191,12 +205,16 @@ impl SplitNode {
     pub fn find_by_uuid(&self, target_uuid: &str) -> Option<ffi::ghostty_surface_t> {
         match self {
             SplitNode::Leaf { uuid, surface, .. } => {
-                if uuid.to_string() == target_uuid { Some(*surface) } else { None }
+                if uuid.to_string() == target_uuid {
+                    Some(*surface)
+                } else {
+                    None
+                }
             }
             SplitNode::Preview { .. } => None, // No Ghostty surface to return
-            SplitNode::Split { start, end, .. } => {
-                start.find_by_uuid(target_uuid).or_else(|| end.find_by_uuid(target_uuid))
-            }
+            SplitNode::Split { start, end, .. } => start
+                .find_by_uuid(target_uuid)
+                .or_else(|| end.find_by_uuid(target_uuid)),
         }
     }
 
@@ -204,19 +222,26 @@ impl SplitNode {
     pub fn find_pane_id_by_uuid(&self, target_uuid: &str) -> Option<u64> {
         match self {
             SplitNode::Leaf { uuid, pane_id, .. } | SplitNode::Preview { uuid, pane_id, .. } => {
-                if uuid.to_string() == target_uuid { Some(*pane_id) } else { None }
+                if uuid.to_string() == target_uuid {
+                    Some(*pane_id)
+                } else {
+                    None
+                }
             }
-            SplitNode::Split { start, end, .. } => {
-                start.find_pane_id_by_uuid(target_uuid)
-                    .or_else(|| end.find_pane_id_by_uuid(target_uuid))
-            }
+            SplitNode::Split { start, end, .. } => start
+                .find_pane_id_by_uuid(target_uuid)
+                .or_else(|| end.find_pane_id_by_uuid(target_uuid)),
         }
     }
 
     /// Set has_attention on the leaf matching pane_id. Returns true if found.
     pub fn set_attention(&mut self, target_pane_id: u64, value: bool) -> bool {
         match self {
-            SplitNode::Leaf { pane_id, has_attention, .. } => {
+            SplitNode::Leaf {
+                pane_id,
+                has_attention,
+                ..
+            } => {
                 if *pane_id == target_pane_id {
                     *has_attention = value;
                     true
@@ -226,7 +251,8 @@ impl SplitNode {
             }
             SplitNode::Preview { .. } => false, // No attention state
             SplitNode::Split { start, end, .. } => {
-                start.set_attention(target_pane_id, value) || end.set_attention(target_pane_id, value)
+                start.set_attention(target_pane_id, value)
+                    || end.set_attention(target_pane_id, value)
             }
         }
     }
@@ -243,9 +269,11 @@ impl SplitNode {
     /// Check if a specific pane has attention.
     pub fn pane_has_attention(&self, target_pane_id: u64) -> bool {
         match self {
-            SplitNode::Leaf { pane_id, has_attention, .. } => {
-                *pane_id == target_pane_id && *has_attention
-            }
+            SplitNode::Leaf {
+                pane_id,
+                has_attention,
+                ..
+            } => *pane_id == target_pane_id && *has_attention,
             SplitNode::Preview { .. } => false,
             SplitNode::Split { start, end, .. } => {
                 start.pane_has_attention(target_pane_id) || end.pane_has_attention(target_pane_id)
@@ -279,9 +307,7 @@ fn attach_terminal_context_menu(gl_area: &gtk4::GLArea) {
     gesture.connect_released({
         let popover = popover.clone();
         move |_, _, x, y| {
-            popover.set_pointing_to(Some(&gtk4::gdk::Rectangle::new(
-                x as i32, y as i32, 1, 1,
-            )));
+            popover.set_pointing_to(Some(&gtk4::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
             popover.popup();
         }
     });
@@ -339,9 +365,17 @@ impl SplitEngine {
         Self::set_surface_recursive(&mut self.root, pane_id, surface);
     }
 
-    fn set_surface_recursive(node: &mut SplitNode, target_pane_id: u64, surface: ffi::ghostty_surface_t) {
+    fn set_surface_recursive(
+        node: &mut SplitNode,
+        target_pane_id: u64,
+        surface: ffi::ghostty_surface_t,
+    ) {
         match node {
-            SplitNode::Leaf { pane_id, surface: s, .. } => {
+            SplitNode::Leaf {
+                pane_id,
+                surface: s,
+                ..
+            } => {
                 if *pane_id == target_pane_id {
                     *s = surface;
                 }
@@ -395,16 +429,32 @@ impl SplitEngine {
             return None;
         }
         match data {
-            SplitNodeData::Leaf { surface_uuid, agent_provider, agent_session_id, cwd, .. } => {
+            SplitNodeData::Leaf {
+                surface_uuid,
+                agent_provider,
+                agent_session_id,
+                cwd,
+                ..
+            } => {
                 let pane_id = *next_pane_id;
                 *next_pane_id += 1;
                 // Create surface in the leaf's saved directory (session
                 // restore, declarative layouts, and agent surfaces all flow
                 // through here). Shell starts there, so splits off it inherit
                 // the right cwd and agents find their per-project session.
-                let leaf_cwd = if cwd.is_empty() { None } else { Some(cwd.clone()) };
-                let (gl_area, _surface_cell) =
-                    crate::ghostty::surface::create_surface(app, ghostty_app, None, pane_id, crate::ghostty::surface::SurfaceIoMode::Exec, leaf_cwd);
+                let leaf_cwd = if cwd.is_empty() {
+                    None
+                } else {
+                    Some(cwd.clone())
+                };
+                let (gl_area, _surface_cell) = crate::ghostty::surface::create_surface(
+                    app,
+                    ghostty_app,
+                    None,
+                    pane_id,
+                    crate::ghostty::surface::SurfaceIoMode::Exec,
+                    leaf_cwd,
+                );
                 // Phase 9: Attach right-click context menu (D-08)
                 attach_terminal_context_menu(&gl_area);
                 // D-06: preserve UUID from session
@@ -414,7 +464,11 @@ impl SplitEngine {
                     .as_deref()
                     .and_then(crate::agent::Provider::from_str)
                 {
-                    let resume_cwd = if cwd.is_empty() { None } else { Some(cwd.clone()) };
+                    let resume_cwd = if cwd.is_empty() {
+                        None
+                    } else {
+                        Some(cwd.clone())
+                    };
                     crate::agent::register(
                         &uuid.to_string(),
                         p,
@@ -431,9 +485,16 @@ impl SplitEngine {
                     has_attention: false,
                 })
             }
-            SplitNodeData::Split { orientation, ratio, start, end } => {
-                let start_node = Self::node_from_data(app, ghostty_app, start, next_pane_id, depth + 1)?;
-                let end_node = Self::node_from_data(app, ghostty_app, end, next_pane_id, depth + 1)?;
+            SplitNodeData::Split {
+                orientation,
+                ratio,
+                start,
+                end,
+            } => {
+                let start_node =
+                    Self::node_from_data(app, ghostty_app, start, next_pane_id, depth + 1)?;
+                let end_node =
+                    Self::node_from_data(app, ghostty_app, end, next_pane_id, depth + 1)?;
                 let gtk_orientation = match orientation.as_str() {
                     "vertical" => gtk4::Orientation::Vertical,
                     _ => gtk4::Orientation::Horizontal,
@@ -478,7 +539,9 @@ impl SplitEngine {
 
     fn sync_surfaces_recursive(node: &mut SplitNode) {
         match node {
-            SplitNode::Leaf { gl_area, surface, .. } => {
+            SplitNode::Leaf {
+                gl_area, surface, ..
+            } => {
                 if surface.is_null() {
                     if let Ok(gl_to_surface) = crate::ghostty::callbacks::GL_TO_SURFACE.lock() {
                         if let Some(&s) = gl_to_surface.get(&(gl_area.as_ptr() as usize)) {
@@ -577,18 +640,20 @@ impl SplitEngine {
         // place it inside the new Paned. We then need to add the Paned to the Stack page.
         // Only capture this for Leaf roots — for nested splits the outer Paned stays in the Stack.
         let old_root_widget = self.root.widget();
-        let stack_slot: Option<(gtk4::Stack, String)> =
-            if matches!(self.root, SplitNode::Leaf { .. } | SplitNode::Preview { .. }) {
-                old_root_widget
-                    .parent()
-                    .and_then(|p| p.downcast::<gtk4::Stack>().ok())
-                    .and_then(|stack| {
-                        let name = stack.page(&old_root_widget).name()?.to_string();
-                        Some((stack, name))
-                    })
-            } else {
-                None
-            };
+        let stack_slot: Option<(gtk4::Stack, String)> = if matches!(
+            self.root,
+            SplitNode::Leaf { .. } | SplitNode::Preview { .. }
+        ) {
+            old_root_widget
+                .parent()
+                .and_then(|p| p.downcast::<gtk4::Stack>().ok())
+                .and_then(|stack| {
+                    let name = stack.page(&old_root_widget).name()?.to_string();
+                    Some((stack, name))
+                })
+        } else {
+            None
+        };
 
         // Find the active leaf's surface for inherited config.
         let inherited_surface = self.find_surface(active_id)?;
@@ -677,18 +742,20 @@ impl SplitEngine {
         // When root is a Leaf or Preview, capture the GtkStack parent so we can
         // re-parent the new Paned into the Stack after the split.
         let old_root_widget = self.root.widget();
-        let stack_slot: Option<(gtk4::Stack, String)> =
-            if matches!(self.root, SplitNode::Leaf { .. } | SplitNode::Preview { .. }) {
-                old_root_widget
-                    .parent()
-                    .and_then(|p| p.downcast::<gtk4::Stack>().ok())
-                    .and_then(|stack| {
-                        let name = stack.page(&old_root_widget).name()?.to_string();
-                        Some((stack, name))
-                    })
-            } else {
-                None
-            };
+        let stack_slot: Option<(gtk4::Stack, String)> = if matches!(
+            self.root,
+            SplitNode::Leaf { .. } | SplitNode::Preview { .. }
+        ) {
+            old_root_widget
+                .parent()
+                .and_then(|p| p.downcast::<gtk4::Stack>().ok())
+                .and_then(|stack| {
+                    let name = stack.page(&old_root_widget).name()?.to_string();
+                    Some((stack, name))
+                })
+        } else {
+            None
+        };
 
         // Create preview pane widgets
         let widgets = crate::browser::create_preview_pane(new_pane_id);
@@ -821,7 +888,9 @@ impl SplitEngine {
                     if let Some(obj) = controllers.item(i) {
                         tracing::debug!("cmux:   controller[{}]: {}", i, obj.type_().name());
                         if let Ok(gesture) = obj.downcast::<gtk4::GestureDrag>() {
-                            tracing::debug!("cmux:   -> found GestureDrag on Paned, connecting drag-end");
+                            tracing::debug!(
+                                "cmux:   -> found GestureDrag on Paned, connecting drag-end"
+                            );
                             gesture.connect_drag_end(|_gesture, _offset_x, _offset_y| {
                                 tracing::debug!("cmux: GestureDrag drag-end fired on Paned — deferring focus restore to idle");
                                 // Defer to idle so GTK has time to fully release the gesture
@@ -925,10 +994,8 @@ impl SplitEngine {
         // A Preview-only workspace has no terminal and the Ghostty surface free
         // can crash when no terminal remains to receive focus.
         let terminal_count = count_terminals(&self.root);
-        let active_is_terminal = matches!(
-            self.root.find_node(active_id),
-            Some(SplitNode::Leaf { .. })
-        );
+        let active_is_terminal =
+            matches!(self.root.find_node(active_id), Some(SplitNode::Leaf { .. }));
         if active_is_terminal && terminal_count <= 1 {
             return None; // Prevent closing last terminal; close workspace instead
         }
@@ -1042,7 +1109,11 @@ impl SplitEngine {
         use gtk4::prelude::*;
         let area = self.find_gl_area(pane_id)?;
         let (w, h) = (area.width(), area.height());
-        if w > 0 && h > 0 { Some((w, h)) } else { None }
+        if w > 0 && h > 0 {
+            Some((w, h))
+        } else {
+            None
+        }
     }
 
     /// Returns all leaf panes in this engine as (uuid, pane_id, active) tuples.
@@ -1124,7 +1195,9 @@ fn remove_leaf_from_tree(node: &mut SplitNode, target_id: u64) -> Option<u64> {
         } => {
             // Check if start is the target (Leaf or Preview).
             let start_is_target = match start.as_ref() {
-                SplitNode::Leaf { pane_id, .. } | SplitNode::Preview { pane_id, .. } => *pane_id == target_id,
+                SplitNode::Leaf { pane_id, .. } | SplitNode::Preview { pane_id, .. } => {
+                    *pane_id == target_id
+                }
                 _ => false,
             };
             if start_is_target {
@@ -1133,11 +1206,7 @@ fn remove_leaf_from_tree(node: &mut SplitNode, target_id: u64) -> Option<u64> {
                 let surviving_widget = surviving.widget();
                 // Find the paned's parent and replace it with the surviving widget.
                 if let Some(parent) = paned.parent() {
-                    replace_child_in_parent(
-                        &parent,
-                        &paned.clone().upcast(),
-                        &surviving_widget,
-                    );
+                    replace_child_in_parent(&parent, &paned.clone().upcast(), &surviving_widget);
                 }
                 let surviving_id = first_pane_id(&surviving);
                 *node = surviving;
@@ -1145,18 +1214,16 @@ fn remove_leaf_from_tree(node: &mut SplitNode, target_id: u64) -> Option<u64> {
             }
             // Check if end is the target (Leaf or Preview).
             let end_is_target = match end.as_ref() {
-                SplitNode::Leaf { pane_id, .. } | SplitNode::Preview { pane_id, .. } => *pane_id == target_id,
+                SplitNode::Leaf { pane_id, .. } | SplitNode::Preview { pane_id, .. } => {
+                    *pane_id == target_id
+                }
                 _ => false,
             };
             if end_is_target {
                 let surviving = *start.clone();
                 let surviving_widget = surviving.widget();
                 if let Some(parent) = paned.parent() {
-                    replace_child_in_parent(
-                        &parent,
-                        &paned.clone().upcast(),
-                        &surviving_widget,
-                    );
+                    replace_child_in_parent(&parent, &paned.clone().upcast(), &surviving_widget);
                 }
                 let surviving_id = first_pane_id(&surviving);
                 *node = surviving;
@@ -1265,7 +1332,11 @@ fn count_terminals(node: &SplitNode) -> usize {
 
 fn find_url_entry_in_tree(node: &SplitNode, pane_id: u64) -> Option<gtk4::Entry> {
     match node {
-        SplitNode::Preview { pane_id: id, url_entry, .. } if *id == pane_id => Some(url_entry.clone()),
+        SplitNode::Preview {
+            pane_id: id,
+            url_entry,
+            ..
+        } if *id == pane_id => Some(url_entry.clone()),
         SplitNode::Preview { .. } | SplitNode::Leaf { .. } => None,
         SplitNode::Split { start, end, .. } => {
             find_url_entry_in_tree(start, pane_id).or_else(|| find_url_entry_in_tree(end, pane_id))
@@ -1564,7 +1635,12 @@ impl SplitNode {
     /// Falls back to empty strings if /proc is unavailable or the pid is unknown.
     pub fn to_data(&self) -> SplitNodeData {
         match self {
-            SplitNode::Leaf { pane_id, uuid, surface, .. } => {
+            SplitNode::Leaf {
+                pane_id,
+                uuid,
+                surface,
+                ..
+            } => {
                 let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
                 let agent = crate::agent::get(&uuid.to_string());
                 // For agent surfaces, the registry holds the authoritative
@@ -1585,7 +1661,7 @@ impl SplitNode {
                     agent_provider: agent.as_ref().map(|a| a.provider.as_str().to_string()),
                     agent_session_id: agent.and_then(|a| a.session_id),
                 }
-            },
+            }
             SplitNode::Preview { .. } => {
                 // Preview panes are ephemeral; skip in session serialization.
                 // Return a dummy leaf that will be ignored during restore.
@@ -1597,8 +1673,14 @@ impl SplitNode {
                     agent_provider: None,
                     agent_session_id: None,
                 }
-            },
-            SplitNode::Split { orientation, paned, start, end, .. } => {
+            }
+            SplitNode::Split {
+                orientation,
+                paned,
+                start,
+                end,
+                ..
+            } => {
                 let total_size = if *orientation == gtk4::Orientation::Horizontal {
                     paned.width()
                 } else {
@@ -1619,7 +1701,7 @@ impl SplitNode {
                     start: Box::new(start.to_data()),
                     end: Box::new(end.to_data()),
                 }
-            },
+            }
         }
     }
 }
@@ -1640,7 +1722,12 @@ mod tests {
             agent_provider: None,
             agent_session_id: None,
         };
-        if let SplitNodeData::Leaf { surface_uuid, pane_id, .. } = data {
+        if let SplitNodeData::Leaf {
+            surface_uuid,
+            pane_id,
+            ..
+        } = data
+        {
             assert_eq!(surface_uuid, id);
             assert_eq!(pane_id, 42);
         } else {
@@ -1662,8 +1749,16 @@ mod tests {
         let json = serde_json::to_string(&leaf).expect("serialize failed");
         let restored: SplitNodeData = serde_json::from_str(&json).expect("deserialize failed");
         if let (
-            SplitNodeData::Leaf { pane_id: p1, surface_uuid: u1, .. },
-            SplitNodeData::Leaf { pane_id: p2, surface_uuid: u2, .. },
+            SplitNodeData::Leaf {
+                pane_id: p1,
+                surface_uuid: u1,
+                ..
+            },
+            SplitNodeData::Leaf {
+                pane_id: p2,
+                surface_uuid: u2,
+                ..
+            },
         ) = (&leaf, &restored)
         {
             assert_eq!(p1, p2);
@@ -1698,18 +1793,28 @@ mod tests {
         };
         let json = serde_json::to_string(&split).expect("serialize failed");
         let restored: SplitNodeData = serde_json::from_str(&json).expect("deserialize failed");
-        if let SplitNodeData::Split { orientation, ratio, .. } = restored {
+        if let SplitNodeData::Split {
+            orientation, ratio, ..
+        } = restored
+        {
             assert_eq!(orientation, "horizontal");
-            assert!((ratio - 0.35).abs() < f64::EPSILON, "ratio not preserved in roundtrip");
+            assert!(
+                (ratio - 0.35).abs() < f64::EPSILON,
+                "ratio not preserved in roundtrip"
+            );
         } else {
             panic!("Roundtrip changed variant to non-Split");
         }
 
         // Verify v1-compat: Split without ratio field deserializes with default 0.5
         let v1_json = r#"{"type":"Split","orientation":"vertical","start":{"type":"Leaf","pane_id":1,"surface_uuid":"00000000-0000-0000-0000-000000000000","shell":"","cwd":""},"end":{"type":"Leaf","pane_id":2,"surface_uuid":"00000000-0000-0000-0000-000000000000","shell":"","cwd":""}}"#;
-        let v1_restored: SplitNodeData = serde_json::from_str(v1_json).expect("v1 deserialize failed");
+        let v1_restored: SplitNodeData =
+            serde_json::from_str(v1_json).expect("v1 deserialize failed");
         if let SplitNodeData::Split { ratio, .. } = v1_restored {
-            assert!((ratio - 0.5).abs() < f64::EPSILON, "v1 missing ratio should default to 0.5");
+            assert!(
+                (ratio - 0.5).abs() < f64::EPSILON,
+                "v1 missing ratio should default to 0.5"
+            );
         } else {
             panic!("v1 deserialize changed variant");
         }

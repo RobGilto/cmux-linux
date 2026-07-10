@@ -19,11 +19,7 @@ static APPLIED: OnceLock<Vec<String>> = OnceLock::new();
 /// shell) so nested agents don't misfile their sessions under the parent
 /// agent's identity. Overridable via `[env] strip` in config.toml; an
 /// explicitly empty list disables stripping.
-pub const DEFAULT_STRIP_PATTERNS: &[&str] = &[
-    "CLAUDECODE",
-    "CLAUDE_CODE_*",
-    "CLAUDE_EFFORT",
-];
+pub const DEFAULT_STRIP_PATTERNS: &[&str] = &["CLAUDECODE", "CLAUDE_CODE_*", "CLAUDE_EFFORT"];
 
 /// True when the NVIDIA proprietary driver is loaded. File checks instead of
 /// exec'ing nvidia-smi: no PATH dependency, no subprocess before GTK init.
@@ -83,7 +79,11 @@ pub fn apply_launch_env(cfg: &crate::config::LaunchConfig) -> &'static Vec<Strin
                 std::env::set_var("GDK_DEBUG", &v);
                 applied.push(format!(
                     "GDK_DEBUG={v} ({})",
-                    if mode == "force" { "forced" } else { "auto, nvidia detected" }
+                    if mode == "force" {
+                        "forced"
+                    } else {
+                        "auto, nvidia detected"
+                    }
                 ));
             }
         }
@@ -167,8 +167,10 @@ mod tests {
 
     #[test]
     fn default_patterns_cover_known_vars() {
-        let patterns: Vec<String> =
-            DEFAULT_STRIP_PATTERNS.iter().map(|s| s.to_string()).collect();
+        let patterns: Vec<String> = DEFAULT_STRIP_PATTERNS
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         for var in [
             "CLAUDECODE",
             "CLAUDE_CODE_SESSION_ID",

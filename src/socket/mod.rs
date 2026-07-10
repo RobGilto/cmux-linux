@@ -81,7 +81,10 @@ pub fn start_socket_server(
     }
 
     // Write last-socket-path marker so cmux.py can discover the socket.
-    if let Err(e) = std::fs::write(last_socket_path_marker(), sock_path.to_string_lossy().as_bytes()) {
+    if let Err(e) = std::fs::write(
+        last_socket_path_marker(),
+        sock_path.to_string_lossy().as_bytes(),
+    ) {
         tracing::warn!("cmux: last-socket-path write failed: {e}");
     }
 
@@ -135,8 +138,12 @@ async fn handle_connection(
             return;
         }
         let response = dispatch_line(&line, &cmd_tx).await;
-        if writer.write_all(response.as_bytes()).await.is_err() { break; }
-        if writer.write_all(b"\n").await.is_err() { break; }
+        if writer.write_all(response.as_bytes()).await.is_err() {
+            break;
+        }
+        if writer.write_all(b"\n").await.is_err() {
+            break;
+        }
     }
 }
 
@@ -148,7 +155,9 @@ fn parse_subscribe(line: &str) -> Option<(serde_json::Value, serde_json::Value)>
     }
     Some((
         req.get("id").cloned().unwrap_or(serde_json::Value::Null),
-        req.get("params").cloned().unwrap_or_else(|| serde_json::json!({})),
+        req.get("params")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({})),
     ))
 }
 
@@ -187,8 +196,12 @@ async fn stream_events(
         "result": {"subscribed": true, "name": names, "limit": limit},
     })
     .to_string();
-    if writer.write_all(ack.as_bytes()).await.is_err() { return; }
-    if writer.write_all(b"\n").await.is_err() { return; }
+    if writer.write_all(ack.as_bytes()).await.is_err() {
+        return;
+    }
+    if writer.write_all(b"\n").await.is_err() {
+        return;
+    }
 
     let mut delivered: u64 = 0;
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(15));
@@ -256,8 +269,15 @@ async fn dispatch_line(
     };
 
     let req_id = req.get("id").cloned().unwrap_or(serde_json::Value::Null);
-    let method = req.get("method").and_then(|m| m.as_str()).unwrap_or("").to_string();
-    let params = req.get("params").cloned().unwrap_or(serde_json::Value::Object(Default::default()));
+    let method = req
+        .get("method")
+        .and_then(|m| m.as_str())
+        .unwrap_or("")
+        .to_string();
+    let params = req
+        .get("params")
+        .cloned()
+        .unwrap_or(serde_json::Value::Object(Default::default()));
 
     // Rendezvous verbs run entirely on the tokio side (no GTK round-trip):
     // wait may block for minutes and must not consume the main-thread bridge.
@@ -275,7 +295,10 @@ async fn dispatch_line(
             return error::error_reply(req_id, error::ErrorCode::InvalidParams, "missing \"name\"")
                 .to_string();
         };
-        let timeout_ms = params.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(300_000);
+        let timeout_ms = params
+            .get("timeout_ms")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(300_000);
         return match rendezvous::wait(name, std::time::Duration::from_millis(timeout_ms)).await {
             Ok(()) => serde_json::json!({"id": req_id, "ok": true, "result": {"released": name}})
                 .to_string(),
@@ -291,74 +314,150 @@ async fn dispatch_line(
     let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
 
     let cmd = match method.as_str() {
-        "system.ping" => commands::SocketCommand::Ping { req_id: req_id.clone(), resp_tx },
-        "system.identify" => commands::SocketCommand::Identify { req_id: req_id.clone(), resp_tx },
-        "system.capabilities" => commands::SocketCommand::Capabilities { req_id: req_id.clone(), resp_tx },
+        "system.ping" => commands::SocketCommand::Ping {
+            req_id: req_id.clone(),
+            resp_tx,
+        },
+        "system.identify" => commands::SocketCommand::Identify {
+            req_id: req_id.clone(),
+            resp_tx,
+        },
+        "system.capabilities" => commands::SocketCommand::Capabilities {
+            req_id: req_id.clone(),
+            resp_tx,
+        },
 
-        "workspace.list" => commands::SocketCommand::WorkspaceList { req_id: req_id.clone(), resp_tx },
-        "workspace.current" => commands::SocketCommand::WorkspaceCurrent { req_id: req_id.clone(), resp_tx },
+        "workspace.list" => commands::SocketCommand::WorkspaceList {
+            req_id: req_id.clone(),
+            resp_tx,
+        },
+        "workspace.current" => commands::SocketCommand::WorkspaceCurrent {
+            req_id: req_id.clone(),
+            resp_tx,
+        },
         "workspace.create" => commands::SocketCommand::WorkspaceCreate {
             req_id: req_id.clone(),
-            remote_target: params.get("remote_target").and_then(|v| v.as_str()).map(String::from),
-            name: params.get("name").and_then(|v| v.as_str()).map(String::from),
+            remote_target: params
+                .get("remote_target")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            name: params
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(String::from),
             cwd: params.get("cwd").and_then(|v| v.as_str()).map(String::from),
             layout: params.get("layout").cloned().filter(|v| !v.is_null()),
             resp_tx,
         },
         "workspace.select" => commands::SocketCommand::WorkspaceSelect {
             req_id: req_id.clone(),
-            id: params.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            id: params
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
             resp_tx,
         },
         "workspace.close" => commands::SocketCommand::WorkspaceClose {
             req_id: req_id.clone(),
-            id: params.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            id: params
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
             resp_tx,
         },
         "workspace.rename" => commands::SocketCommand::WorkspaceRename {
             req_id: req_id.clone(),
-            id: params.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            name: params.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            id: params
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            name: params
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
             resp_tx,
         },
-        "workspace.next" => commands::SocketCommand::WorkspaceNext { req_id: req_id.clone(), resp_tx },
-        "workspace.previous" => commands::SocketCommand::WorkspacePrev { req_id: req_id.clone(), resp_tx },
-        "workspace.last" => commands::SocketCommand::WorkspaceLast { req_id: req_id.clone(), resp_tx },
+        "workspace.next" => commands::SocketCommand::WorkspaceNext {
+            req_id: req_id.clone(),
+            resp_tx,
+        },
+        "workspace.previous" => commands::SocketCommand::WorkspacePrev {
+            req_id: req_id.clone(),
+            resp_tx,
+        },
+        "workspace.last" => commands::SocketCommand::WorkspaceLast {
+            req_id: req_id.clone(),
+            resp_tx,
+        },
         "workspace.reorder" => commands::SocketCommand::WorkspaceReorder {
             req_id: req_id.clone(),
-            id: params.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            id: params
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
             position: params.get("position").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
             resp_tx,
         },
 
-        "surface.list" => commands::SocketCommand::SurfaceList { req_id: req_id.clone(), resp_tx },
+        "surface.list" => commands::SocketCommand::SurfaceList {
+            req_id: req_id.clone(),
+            resp_tx,
+        },
         "surface.split" => commands::SocketCommand::SurfaceSplit {
             req_id: req_id.clone(),
             id: params.get("id").and_then(|v| v.as_str()).map(String::from),
-            direction: params.get("direction").and_then(|v| v.as_str()).unwrap_or("horizontal").to_string(),
-            agent: params.get("agent").and_then(|v| v.as_str()).map(String::from),
+            direction: params
+                .get("direction")
+                .and_then(|v| v.as_str())
+                .unwrap_or("horizontal")
+                .to_string(),
+            agent: params
+                .get("agent")
+                .and_then(|v| v.as_str())
+                .map(String::from),
             resp_tx,
         },
         "surface.focus" => commands::SocketCommand::SurfaceFocus {
             req_id: req_id.clone(),
-            id: params.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            id: params
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
             resp_tx,
         },
         "surface.close" => commands::SocketCommand::SurfaceClose {
             req_id: req_id.clone(),
-            id: params.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            id: params
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
             resp_tx,
         },
         "surface.send_text" => commands::SocketCommand::SurfaceSendText {
             req_id: req_id.clone(),
             id: params.get("id").and_then(|v| v.as_str()).map(String::from),
-            text: params.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            text: params
+                .get("text")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
             resp_tx,
         },
         "surface.send_key" => commands::SocketCommand::SurfaceSendKey {
             req_id: req_id.clone(),
             id: params.get("id").and_then(|v| v.as_str()).map(String::from),
-            key: params.get("key").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            key: params
+                .get("key")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
             resp_tx,
         },
         "surface.read_text" => commands::SocketCommand::SurfaceReadText {
@@ -385,21 +484,40 @@ async fn dispatch_line(
             resp_tx,
         },
 
-        "pane.list" => commands::SocketCommand::PaneList { req_id: req_id.clone(), resp_tx },
+        "pane.list" => commands::SocketCommand::PaneList {
+            req_id: req_id.clone(),
+            resp_tx,
+        },
         "pane.focus" => commands::SocketCommand::PaneFocus {
             req_id: req_id.clone(),
             id: params.get("id").and_then(|v| v.as_str()).map(String::from),
             resp_tx,
         },
-        "pane.last" => commands::SocketCommand::PaneLast { req_id: req_id.clone(), resp_tx },
+        "pane.last" => commands::SocketCommand::PaneLast {
+            req_id: req_id.clone(),
+            resp_tx,
+        },
 
-        "window.list" => commands::SocketCommand::WindowList { req_id: req_id.clone(), resp_tx },
-        "window.current" => commands::SocketCommand::WindowCurrent { req_id: req_id.clone(), resp_tx },
+        "window.list" => commands::SocketCommand::WindowList {
+            req_id: req_id.clone(),
+            resp_tx,
+        },
+        "window.current" => commands::SocketCommand::WindowCurrent {
+            req_id: req_id.clone(),
+            resp_tx,
+        },
 
-        "debug.layout" => commands::SocketCommand::DebugLayout { req_id: req_id.clone(), resp_tx },
+        "debug.layout" => commands::SocketCommand::DebugLayout {
+            req_id: req_id.clone(),
+            resp_tx,
+        },
         "debug.type" => commands::SocketCommand::DebugType {
             req_id: req_id.clone(),
-            text: params.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            text: params
+                .get("text")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
             resp_tx,
         },
 
@@ -409,7 +527,11 @@ async fn dispatch_line(
         },
         "notification.clear" => commands::SocketCommand::NotificationClear {
             req_id: req_id.clone(),
-            id: params.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            id: params
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
             resp_tx,
         },
         "agent.hooks_setup" => commands::SocketCommand::AgentHooksSetup {
@@ -422,15 +544,33 @@ async fn dispatch_line(
         },
         "agent.report_session" => commands::SocketCommand::AgentReportSession {
             req_id: req_id.clone(),
-            surface: params.get("surface").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            provider: params.get("provider").and_then(|v| v.as_str()).map(String::from),
-            session_id: params.get("session_id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            surface: params
+                .get("surface")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            provider: params
+                .get("provider")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            session_id: params
+                .get("session_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
             resp_tx,
         },
         "workspace.set_group" => commands::SocketCommand::WorkspaceSetGroup {
             req_id: req_id.clone(),
-            workspace: params.get("workspace").and_then(|v| v.as_str()).map(String::from),
-            group: params.get("group").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            workspace: params
+                .get("workspace")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            group: params
+                .get("group")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
             resp_tx,
         },
         "workspace_group.list" => commands::SocketCommand::WorkspaceGroupList {
@@ -439,37 +579,81 @@ async fn dispatch_line(
         },
         "workspace.set_status" => commands::SocketCommand::WorkspaceSetStatus {
             req_id: req_id.clone(),
-            workspace: params.get("workspace").and_then(|v| v.as_str()).map(String::from),
-            state: params.get("state").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            color: params.get("color").and_then(|v| v.as_str()).map(String::from),
+            workspace: params
+                .get("workspace")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            state: params
+                .get("state")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            color: params
+                .get("color")
+                .and_then(|v| v.as_str())
+                .map(String::from),
             resp_tx,
         },
         "workspace.set_progress" => commands::SocketCommand::WorkspaceSetProgress {
             req_id: req_id.clone(),
-            workspace: params.get("workspace").and_then(|v| v.as_str()).map(String::from),
+            workspace: params
+                .get("workspace")
+                .and_then(|v| v.as_str())
+                .map(String::from),
             value: params.get("value").and_then(|v| v.as_f64()).unwrap_or(-1.0),
-            label: params.get("label").and_then(|v| v.as_str()).map(String::from),
+            label: params
+                .get("label")
+                .and_then(|v| v.as_str())
+                .map(String::from),
             resp_tx,
         },
         "workspace.log" => commands::SocketCommand::WorkspaceLog {
             req_id: req_id.clone(),
-            workspace: params.get("workspace").and_then(|v| v.as_str()).map(String::from),
-            message: params.get("message").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            workspace: params
+                .get("workspace")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            message: params
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
             resp_tx,
         },
         "notification.create" => commands::SocketCommand::NotificationCreate {
             req_id: req_id.clone(),
-            title: params.get("title").and_then(|v| v.as_str()).unwrap_or("cmux").to_string(),
-            body: params.get("body").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            workspace: params.get("workspace").and_then(|v| v.as_str()).map(String::from),
-            desktop: params.get("desktop").and_then(|v| v.as_bool()).unwrap_or(true),
+            title: params
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("cmux")
+                .to_string(),
+            body: params
+                .get("body")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            workspace: params
+                .get("workspace")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            desktop: params
+                .get("desktop")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true),
             resp_tx,
         },
 
         "browser.open" => commands::SocketCommand::BrowserOpen {
             req_id: req_id.clone(),
-            url: params.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            workspace: params.get("workspace").and_then(|v| v.as_str()).map(String::from),
+            url: params
+                .get("url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            workspace: params
+                .get("workspace")
+                .and_then(|v| v.as_str())
+                .map(String::from),
             resp_tx,
         },
         "browser.stream.enable" => commands::SocketCommand::BrowserStreamEnable {
@@ -488,8 +672,14 @@ async fn dispatch_line(
         // Route all other browser.* methods to the generic proxy (P0/P1 parity)
         _ if method.starts_with("browser.") => {
             // Guard above guarantees the prefix; default is unreachable.
-            let action = method.strip_prefix("browser.").unwrap_or_default().to_string();
-            let surface_ref = params.get("surface_ref").and_then(|v| v.as_str()).map(String::from);
+            let action = method
+                .strip_prefix("browser.")
+                .unwrap_or_default()
+                .to_string();
+            let surface_ref = params
+                .get("surface_ref")
+                .and_then(|v| v.as_str())
+                .map(String::from);
             commands::SocketCommand::BrowserAction {
                 req_id: req_id.clone(),
                 action,
@@ -507,12 +697,8 @@ async fn dispatch_line(
     };
 
     if cmd_tx.send(cmd).is_err() {
-        return error::error_reply(
-            req_id,
-            error::ErrorCode::Internal,
-            "handler channel closed",
-        )
-        .to_string();
+        return error::error_reply(req_id, error::ErrorCode::Internal, "handler channel closed")
+            .to_string();
     }
 
     // Per-request deadline: a wedged GTK main thread answers `timeout`
@@ -546,7 +732,10 @@ mod tests {
     fn test_socket_path_creation() {
         unsafe { std::env::set_var("XDG_RUNTIME_DIR", "/tmp/test-xdg") };
         let path = socket_path();
-        assert_eq!(path, std::path::PathBuf::from("/tmp/test-xdg/cmux/cmux.sock"));
+        assert_eq!(
+            path,
+            std::path::PathBuf::from("/tmp/test-xdg/cmux/cmux.sock")
+        );
     }
 
     /// Malformed input: invalid JSON → structured parse_error, id null.
@@ -568,8 +757,7 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let big = "x".repeat(1_000_000);
         let resp: serde_json::Value =
-            serde_json::from_str(&dispatch_line(&big, &tx).await)
-                .expect("reply must be JSON");
+            serde_json::from_str(&dispatch_line(&big, &tx).await).expect("reply must be JSON");
         assert_eq!(resp["error"]["code"], "parse_error");
     }
 
@@ -579,8 +767,11 @@ mod tests {
     async fn test_dispatch_unknown_method() {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         tokio::spawn(async move {
-            if let Some(commands::SocketCommand::NotImplemented { req_id, method, resp_tx }) =
-                rx.recv().await
+            if let Some(commands::SocketCommand::NotImplemented {
+                req_id,
+                method,
+                resp_tx,
+            }) = rx.recv().await
             {
                 let _ = resp_tx.send(serde_json::json!({
                     "id": req_id, "ok": false,
@@ -604,10 +795,9 @@ mod tests {
         tokio::spawn(async move {
             let _ = rx.recv().await; // receive and drop resp_tx without answering
         });
-        let resp: serde_json::Value = serde_json::from_str(
-            &dispatch_line(r#"{"method":"system.ping","id":1}"#, &tx).await,
-        )
-        .expect("reply must be JSON");
+        let resp: serde_json::Value =
+            serde_json::from_str(&dispatch_line(r#"{"method":"system.ping","id":1}"#, &tx).await)
+                .expect("reply must be JSON");
         assert_eq!(resp["error"]["code"], "internal_error");
     }
 
@@ -615,8 +805,13 @@ mod tests {
     #[test]
     fn test_focus_policy() {
         let focus_intent_methods = [
-            "workspace.select", "pane.focus", "pane.last", "surface.focus",
-            "workspace.next", "workspace.previous", "workspace.last",
+            "workspace.select",
+            "pane.focus",
+            "pane.last",
+            "surface.focus",
+            "workspace.next",
+            "workspace.previous",
+            "workspace.last",
         ];
         assert!(!focus_intent_methods.is_empty());
     }
