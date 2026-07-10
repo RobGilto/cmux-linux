@@ -1958,7 +1958,6 @@ mod data_tests {
                     collect(start, out);
                     collect(end, out);
                 }
-                _ => {}
             }
         }
         collect(&back, &mut ids);

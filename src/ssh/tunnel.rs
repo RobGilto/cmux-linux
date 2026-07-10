@@ -86,7 +86,7 @@ pub async fn run_ssh_lifecycle(
                 // D-07: inject reconnect message if this was a reconnection
                 if was_reconnect {
                     if let Ok(streams) = bridge.streams.lock() {
-                        for (&pane_id, _) in streams.iter() {
+                        for &pane_id in streams.keys() {
                             let msg =
                                 b"\r\n\x1b[32m[Reconnected \xe2\x80\x94 new session]\x1b[0m\r\n";
                             let _ = ssh_tx.send(SshEvent::RemoteOutput {
@@ -140,7 +140,7 @@ pub async fn run_ssh_lifecycle(
 
                 // D-06: inject disconnect message into all active panes
                 if let Ok(streams) = bridge.streams.lock() {
-                    for (&pane_id, _) in streams.iter() {
+                    for &pane_id in streams.keys() {
                         let msg = b"\r\n\x1b[33m[SSH disconnected \xe2\x80\x94 reconnecting...]\x1b[0m\r\n";
                         let _ = ssh_tx.send(SshEvent::RemoteOutput {
                             pane_id,
