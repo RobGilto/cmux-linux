@@ -75,8 +75,14 @@ jobs:
       - name: Build libghostty
         if: steps.ghostty-cache.outputs.cache-hit != 'true'
         run: |
+          # Exact invocation from scripts/setup-linux.sh (the known-good build).
           cd ghostty
-          zig build -Doptimize=ReleaseFast -Dapp-runtime=none -Demit-shared-lib=false
+          zig build \
+            -Dapp-runtime=none \
+            -Doptimize=ReleaseFast \
+            -Dcpu=baseline \
+            -Dgtk-x11=true \
+            -Dgtk-wayland=true
 
       - name: rustfmt
         run: cargo fmt --check
