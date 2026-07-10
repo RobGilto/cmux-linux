@@ -464,6 +464,9 @@ pub fn handle_socket_command(cmd: SocketCommand, state: &crate::app_state::AppSt
                         req_id,
                         json!({
                             "uuid": ws.uuid.to_string(),
+                            // Alias for macOS-harness compatibility
+                            // (tests_v2/cmux.py reads workspace_id).
+                            "workspace_id": ws.uuid.to_string(),
                             "name": ws.name,
                         }),
                     ));

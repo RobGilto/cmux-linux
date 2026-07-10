@@ -40,10 +40,19 @@ Living document — updated as edges are found or closed. Last review: 2026-07-1
   reported. Gemini always starts fresh (no resume CLI surface).
 
 ### Integration tests
-- `tests_v2/` browser suites predate the agent-browser submodule bump on
-  some machines; the CI headless job runs the orchestration subset
-  (`test_orchestration_v3.py`). Known-flaky visual test: "D12" VM failure
-  (see TODO.md) — quarantined, not silently green.
+- **Much of `tests_v2/` is macOS-harness, not Linux-verified.** The suites
+  were inherited from macOS cmux and depend on protocol this port doesn't
+  implement: `app.focus_override.set` (notifications suite), identify
+  caller-context refs (`test_cli_identify_ref_resolution`), CLI flags the
+  Linux CLI lacks (`test_workspace_relative`, `test_cli_id_format_defaults`),
+  and macOS close-selection semantics (close selects *next* there, *previous*
+  here). These fail for parity reasons, not regressions.
+- **The Linux-verified set** (all green): `test_orchestration_v3.py`,
+  `scripts/fleet-smoke.sh`, and the 80 Rust unit tests. CI runs exactly this
+  set headlessly. Porting the remaining harness expectations is tracked as
+  follow-up work.
+- Known-flaky visual test: "D12" VM failure (see TODO.md) — quarantined,
+  not silently green.
 
 ### Upstream
 - This fork carries the full contribution stack (see MY-CONTRIBUTIONS.md).
