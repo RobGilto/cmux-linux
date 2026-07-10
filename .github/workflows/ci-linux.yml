@@ -35,8 +35,10 @@ jobs:
         with:
           submodules: false
 
-      - name: Checkout ghostty submodule only
-        run: git submodule update --init --force ghostty
+      - name: Checkout required submodules
+        # ghostty: libghostty build input. agent-browser: cargo workspace
+        # member — cargo metadata fails without its manifest present.
+        run: git submodule update --init --force ghostty agent-browser
 
       - name: Install system deps
         run: |
