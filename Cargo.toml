@@ -40,3 +40,12 @@ path = "src/bin/generate.rs"
 [build-dependencies]
 bindgen = "0.72.1"
 cc = "1.2.57"
+
+# Release profile (roadmap 5.2): thin LTO + single codegen unit for speed,
+# symbols stripped for size, unwind panics kept — the panic hook must run
+# (it saves the session) and abort would skip it.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "unwind"

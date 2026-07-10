@@ -64,18 +64,34 @@ at `target/release/agent-browser`. Browser commands (`cmux browser …`)
 require this binary to be on `$PATH` or under
 `~/.local/share/cmux/bin/agent-browser`.
 
+### Quickstart
+
+```bash
+cmux launch        # find cmux-app, start it detached, wait for ping
+cmux doctor        # verify: socket, GL, config, session, agent CLIs, hooks
+```
+
+`cmux launch` is idempotent (exits 0 if already running), passes `--fresh`
+through to wipe the saved session, and logs the app's output to
+`$XDG_STATE_HOME/cmux/launch.log`. NVIDIA GL workarounds and child-shell env
+hygiene are applied **inside the binary** — no environment incantations.
+
 ### Troubleshooting: blank window / "Unable to create a GL context" on NVIDIA
 
 On NVIDIA proprietary drivers, GDK binds the GLES API at EGL init by default
 and then cannot create the desktop OpenGL context libghostty's renderer
-requires, so the terminal pane fails with `GLArea realize error: Unable to
-create a GL context` (on both X11 and Wayland). The packaged launch wrappers
-handle this automatically; if you run the binary directly or use an older
-build, launch with:
+requires. The binary now detects NVIDIA and applies `gl-prefer-gl` itself
+(see `src/platform.rs`); `cmux identify` shows what was auto-applied and
+`cmux doctor` checks the resulting GL context. Config override:
 
-```bash
-GDK_DEBUG=gl-prefer-gl cmux-app
+```toml
+# ~/.config/cmux/config.toml
+[launch]
+gl_workaround = "auto"   # "auto" | "force" | "off"
 ```
+
+If a pane still comes up blank, check `cmux doctor` and the daily log at
+`$XDG_STATE_HOME/cmux/logs/`. Known remaining edges: `docs/KNOWN-ISSUES.md`.
 
 ## Browser Automation
 

@@ -4,6 +4,7 @@
 //! It connects to the cmux-app via Unix socket JSON-RPC.
 
 pub mod discovery;
+pub mod doctor;
 pub mod format;
 pub mod socket_client;
 
@@ -56,6 +57,8 @@ pub enum Commands {
     },
     /// Ping the running cmux instance
     Ping,
+    /// Run self-service diagnostics (socket, GL, config, session, providers)
+    Doctor,
     /// Block until a named rendezvous point is signalled (or signal it).
     /// Orchestrator: `cmux wait-for X --timeout 600`. Worker: `cmux wait-for -S X`.
     /// A signal with no waiters is latched for the next waiter.
@@ -551,6 +554,10 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
     {
         return run_launch(&cli, fresh, wait_secs, app_path.as_deref());
     }
+    // Doctor likewise must work when the app is down — that's its job.
+    if let Commands::Doctor = cli.command {
+        return doctor::run_doctor(&cli.socket, cli.json);
+    }
 
     // Resolve socket path: --socket flag > discovery > error
     let socket_path = if let Some(ref path) = cli.socket {
@@ -989,6 +996,7 @@ fn command_to_rpc(cmd: &Commands) -> (&'static str, serde_json::Value) {
         // Launch never reaches RPC mapping — run() intercepts it first.
         Commands::Launch { .. } => unreachable!("launch handled in run()"),
         Commands::Ping => ("system.ping", json!({})),
+        Commands::Doctor => unreachable!("doctor handled in run()"),
         Commands::WaitFor {
             name, signal: true, ..
         } => ("rendezvous.signal", json!({"name": name})),
