@@ -53,6 +53,7 @@ impl Provider {
     }
 
     /// All known providers, for agent-sessions listings and doctor checks.
+    #[allow(dead_code)] // consumed by cmux doctor (Phase 5)
     pub const ALL: [Provider; 4] = [
         Provider::Claude,
         Provider::Codex,
@@ -151,6 +152,7 @@ pub fn get(surface_uuid: &str) -> Option<AgentSession> {
     AGENT_SESSIONS.lock().ok()?.get(surface_uuid).cloned()
 }
 
+#[allow(dead_code)] // close-pane integration pending
 pub fn remove(surface_uuid: &str) {
     if let Ok(mut m) = AGENT_SESSIONS.lock() {
         m.remove(surface_uuid);
@@ -239,4 +241,76 @@ pub fn install_hooks() -> Result<Vec<String>, String> {
     }
 
     Ok(vec!["claude".to_string()])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_from_str_all_and_aliases() {
+        assert_eq!(Provider::from_str("claude"), Some(Provider::Claude));
+        assert_eq!(Provider::from_str("claude-code"), Some(Provider::Claude));
+        assert_eq!(Provider::from_str("CODEX"), Some(Provider::Codex));
+        assert_eq!(Provider::from_str("gemini"), Some(Provider::Gemini));
+        assert_eq!(Provider::from_str("pi"), Some(Provider::Pi));
+        assert_eq!(Provider::from_str("gpt"), None);
+    }
+
+    #[test]
+    fn provider_launch_commands() {
+        assert_eq!(Provider::Claude.launch_command(None), "claude");
+        assert_eq!(
+            Provider::Claude.launch_command(Some("abc")),
+            "claude --resume abc"
+        );
+        assert_eq!(
+            Provider::Codex.launch_command(Some("s1")),
+            "codex resume s1"
+        );
+        assert_eq!(Provider::Gemini.launch_command(Some("x")), "gemini"); // no resume
+        assert_eq!(Provider::Pi.launch_command(Some("x")), "pi -c");
+    }
+
+    #[test]
+    fn provider_resumability() {
+        assert!(Provider::Claude.resumable());
+        assert!(Provider::Codex.resumable());
+        assert!(Provider::Pi.resumable());
+        assert!(!Provider::Gemini.resumable());
+    }
+
+    #[test]
+    fn startup_command_shape() {
+        let s = AgentSession {
+            provider: Provider::Claude,
+            session_id: Some("sid".into()),
+            cwd: Some("/proj".into()),
+        };
+        let cmd = startup_command("uuid-1", &s);
+        assert!(cmd.starts_with("cd '/proj'; "));
+        assert!(cmd.contains("export CMUX_PANE=uuid-1;"));
+        assert!(cmd.ends_with("claude --resume sid"));
+    }
+
+    #[test]
+    fn first_capture_wins() {
+        register("t-cap", Provider::Claude, None, None);
+        assert!(matches!(
+            set_session_id("t-cap", "first"),
+            CaptureResult::Captured
+        ));
+        assert!(matches!(
+            set_session_id("t-cap", "second"),
+            CaptureResult::AlreadyCaptured
+        ));
+        assert_eq!(
+            get("t-cap").and_then(|a| a.session_id).as_deref(),
+            Some("first")
+        );
+        assert!(matches!(
+            set_session_id("nope", "x"),
+            CaptureResult::NotAgent
+        ));
+    }
 }

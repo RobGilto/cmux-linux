@@ -6,7 +6,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 use gtk4::prelude::*;
-use gtk4::{gio, Application, ApplicationWindow, CssProvider, StyleContext};
+use gtk4::{gio, Application, ApplicationWindow, CssProvider};
 use std::ffi::CString;
 
 mod agent;
@@ -252,6 +252,7 @@ fn main() {
     drop(runtime);
 }
 
+#[allow(clippy::too_many_arguments)] // wiring hub: everything meets here once
 fn build_ui(
     app: &Application,
     runtime_handle: tokio::runtime::Handle,
@@ -308,6 +309,7 @@ fn build_ui(
 
     // 2. Load CSS
     let provider = CssProvider::new();
+    #[allow(deprecated)] // load_from_string needs gtk 4.12 feature bump across distros
     provider.load_from_data(APP_CSS);
     gtk4::style_context_add_provider_for_display(
         &display,
@@ -327,7 +329,6 @@ fn build_ui(
     // gsettings/xsettings value from clobbering our override at any later
     // point in the app lifecycle (theme reload, settings refresh, etc.).
     {
-        use gtk4::prelude::*;
         let adwaita_index = std::path::PathBuf::from("/usr/share/icons/Adwaita/index.theme");
         if adwaita_index.exists() {
             let settings = gtk4::Settings::for_display(&display);

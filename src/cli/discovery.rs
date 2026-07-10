@@ -65,7 +65,7 @@ pub fn discover_socket() -> Option<String> {
             }
         }
         if !candidates.is_empty() {
-            candidates.sort_by(|a, b| b.1.cmp(&a.1));
+            candidates.sort_by_key(|c| std::cmp::Reverse(c.1));
             return Some(candidates[0].0.clone());
         }
     }

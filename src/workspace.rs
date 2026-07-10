@@ -49,6 +49,7 @@ pub struct Workspace {
     /// The name key used with GtkStack::add_named / set_visible_child_name.
     pub stack_page_name: String,
     /// Sequential number used for default naming ("Workspace N").
+    #[allow(dead_code)]
     /// Preserved even after renames so we don't reuse numbers.
     pub display_number: usize,
     /// Stable UUID for session persistence and v2 socket protocol identity.

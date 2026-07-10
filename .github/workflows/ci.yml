@@ -12,6 +12,10 @@ concurrency:
 
 jobs:
   workflow-guard-tests:
+    # macOS-upstream guard checks (SwiftPM/create-dmg/GhosttyKit) — not
+    # relevant to the Linux port's health. Kept runnable manually for
+    # upstream-merge compatibility; ci-linux.yml is the required pipeline.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

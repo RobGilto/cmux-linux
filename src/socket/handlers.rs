@@ -1873,3 +1873,151 @@ fn find_preview_picture(node: &crate::split_engine::SplitNode) -> Option<gtk4::P
         crate::split_engine::SplitNode::Leaf { .. } => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -- key_to_bytes: the send-key vocabulary is a wire contract --
+
+    #[test]
+    fn key_enter_tab_escape() {
+        assert_eq!(key_to_bytes("enter").as_deref(), Some(b"\r".as_ref()));
+        assert_eq!(key_to_bytes("return").as_deref(), Some(b"\r".as_ref()));
+        assert_eq!(key_to_bytes("tab").as_deref(), Some(b"\t".as_ref()));
+        assert_eq!(key_to_bytes("escape").as_deref(), Some(b"\x1b".as_ref()));
+    }
+
+    #[test]
+    fn key_arrows_and_nav() {
+        assert_eq!(key_to_bytes("up").as_deref(), Some(b"\x1b[A".as_ref()));
+        assert_eq!(key_to_bytes("down").as_deref(), Some(b"\x1b[B".as_ref()));
+        assert_eq!(key_to_bytes("pageup").as_deref(), Some(b"\x1b[5~".as_ref()));
+        assert_eq!(key_to_bytes("delete").as_deref(), Some(b"\x1b[3~".as_ref()));
+    }
+
+    #[test]
+    fn key_ctrl_combos() {
+        assert_eq!(key_to_bytes("ctrl+c").as_deref(), Some([0x03].as_ref()));
+        assert_eq!(key_to_bytes("ctrl+d").as_deref(), Some([0x04].as_ref()));
+        assert_eq!(key_to_bytes("ctrl+1"), None); // only letters
+    }
+
+    #[test]
+    fn key_single_char_passthrough_and_unknown() {
+        assert_eq!(key_to_bytes("x").as_deref(), Some(b"x".as_ref()));
+        assert_eq!(key_to_bytes("Q").as_deref(), Some(b"Q".as_ref()));
+        assert_eq!(key_to_bytes("no-such-key"), None);
+    }
+
+    // -- resolve_surface_ref: "surface:N" handles --
+
+    fn refs() -> std::collections::HashMap<u32, String> {
+        [
+            (1u32, "uuid-one".to_string()),
+            (7u32, "uuid-seven".to_string()),
+        ]
+        .into_iter()
+        .collect()
+    }
+
+    #[test]
+    fn ref_resolves_known_handle() {
+        assert_eq!(
+            resolve_surface_ref("surface:7", &refs()),
+            Ok("uuid-seven".into())
+        );
+    }
+
+    #[test]
+    fn ref_unknown_handle_lists_available() {
+        let err = resolve_surface_ref("surface:9", &refs()).unwrap_err();
+        assert!(err.0.contains("surface:9"));
+        assert_eq!(err.1.len(), 2);
+    }
+
+    #[test]
+    fn ref_uuid_passes_through() {
+        assert_eq!(
+            resolve_surface_ref("f4349bf5-aaaa", &refs()),
+            Ok("f4349bf5-aaaa".into())
+        );
+    }
+
+    // -- layout_to_data: declarative layout compilation --
+
+    #[test]
+    fn layout_missing_type_rejected() {
+        let mut st = Vec::new();
+        assert!(layout_to_data(&json!({}), None, 0, &mut st).is_err());
+    }
+
+    #[test]
+    fn layout_too_deep_rejected() {
+        let mut st = Vec::new();
+        assert!(layout_to_data(&json!({"type":"terminal"}), None, 17, &mut st).is_err());
+    }
+
+    #[test]
+    fn layout_terminal_with_cwd_and_command() {
+        let mut st = Vec::new();
+        let node = layout_to_data(
+            &json!({"type":"terminal","cwd":"/tmp","command":"htop"}),
+            None,
+            0,
+            &mut st,
+        )
+        .expect("valid terminal");
+        assert!(matches!(
+            node,
+            crate::split_engine::SplitNodeData::Leaf { .. }
+        ));
+        assert_eq!(st.len(), 1);
+        assert_eq!(st[0].1, "cd '/tmp' && htop");
+    }
+
+    #[test]
+    fn layout_default_cwd_applies() {
+        let mut st = Vec::new();
+        layout_to_data(&json!({"type":"terminal"}), Some("/proj"), 0, &mut st).expect("valid");
+        assert_eq!(st[0].1, "cd '/proj'");
+    }
+
+    #[test]
+    fn layout_split_recurses() {
+        let mut st = Vec::new();
+        let node = layout_to_data(
+            &json!({
+                "type": "split", "direction": "horizontal", "ratio": 0.3,
+                "start": {"type": "terminal", "command": "a"},
+                "end": {"type": "terminal", "command": "b"},
+            }),
+            None,
+            0,
+            &mut st,
+        )
+        .expect("valid split");
+        assert!(matches!(
+            node,
+            crate::split_engine::SplitNodeData::Split { .. }
+        ));
+        assert_eq!(st.len(), 2);
+    }
+
+    #[test]
+    fn layout_agent_terminal_registers_and_boots() {
+        let mut st = Vec::new();
+        layout_to_data(
+            &json!({"type":"terminal","agent":"pi","cwd":"/tmp"}),
+            None,
+            0,
+            &mut st,
+        )
+        .expect("valid agent terminal");
+        assert_eq!(st.len(), 1);
+        let cmd = &st[0].1;
+        assert!(cmd.contains("cd '/tmp'"), "missing cd: {cmd}");
+        assert!(cmd.contains("CMUX_PANE="), "missing CMUX_PANE: {cmd}");
+        assert!(cmd.ends_with("pi"), "should boot pi: {cmd}");
+    }
+}

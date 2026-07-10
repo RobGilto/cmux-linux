@@ -3,6 +3,10 @@
 //! This binary is independent of GTK4 — it communicates with the running
 //! cmux-app instance via Unix socket JSON-RPC.
 
+// The test target compiles this bin without invoking main(), which would
+// flag every CLI function as dead code under -D warnings.
+#![cfg_attr(test, allow(dead_code))]
+
 #[path = "../cli/mod.rs"]
 mod cli;
 

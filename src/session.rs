@@ -93,8 +93,7 @@ pub fn save_session_to(data: &SessionData, path: &Path) -> std::io::Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     let tmp_path = path.with_extension("json.tmp");
-    let json = serde_json::to_string_pretty(data)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let json = serde_json::to_string_pretty(data).map_err(std::io::Error::other)?;
     std::fs::write(&tmp_path, json.as_bytes())?;
     std::fs::rename(&tmp_path, path)?;
     Ok(())

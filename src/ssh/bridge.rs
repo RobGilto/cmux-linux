@@ -5,12 +5,14 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
 /// Per-pane stream state tracking.
+#[allow(dead_code)] // fields read by remote-daemon protocol work in flight
 pub struct PaneStream {
     pub stream_id: String,
     pub subscribed: bool,
 }
 
 /// Request to write data through the SSH tunnel to a specific stream.
+#[allow(dead_code)] // fields read by remote-daemon protocol work in flight
 pub struct WriteRequest {
     pub stream_id: String,
     pub data_base64: String,
@@ -18,7 +20,9 @@ pub struct WriteRequest {
 
 /// Output data from remote shell to be dispatched to GTK main thread.
 pub struct OutputEvent {
+    #[allow(dead_code)]
     pub pane_id: u64,
+    #[allow(dead_code)]
     pub data: Vec<u8>,
 }
 
@@ -35,6 +39,7 @@ pub struct SshBridge {
     /// Atomic counter for JSON-RPC request IDs
     pub next_rpc_id: Arc<AtomicU64>,
     /// Channel for output events to GTK main thread
+    #[allow(dead_code)]
     pub output_tx: mpsc::UnboundedSender<OutputEvent>,
 }
 
@@ -151,6 +156,7 @@ impl SshBridge {
 /// Context passed as userdata to the Ghostty io_write_cb callback.
 /// Must be allocated with Arc and leaked via Arc::into_raw for the C callback.
 pub struct IoWriteContext {
+    #[allow(dead_code)]
     pub pane_id: u64,
     pub write_tx: mpsc::UnboundedSender<WriteRequest>,
     /// Set after proxy.open returns the stream_id.

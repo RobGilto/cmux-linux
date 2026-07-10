@@ -33,6 +33,7 @@ pub struct BrowserManager {
     chromium_path: Option<PathBuf>,
 }
 
+#[allow(dead_code)] // new()/chromium_path() are the public construction API
 impl BrowserManager {
     pub fn new() -> Self {
         BrowserManager {
@@ -319,30 +320,27 @@ impl BrowserManager {
             let mut first_frame = true;
             while let Some(jpeg_bytes) = frame_rx.recv().await {
                 let bytes = glib::Bytes::from(&jpeg_bytes);
-                match gtk4::gdk::Texture::from_bytes(&bytes) {
-                    Ok(texture) => {
-                        picture_clone.set_paintable(Some(&texture));
-                        // Hide the "No browser preview" overlay label on first frame
-                        if first_frame {
-                            first_frame = false;
-                            if let Some(overlay) = picture_clone
-                                .parent()
-                                .and_then(|p| p.downcast::<gtk4::Overlay>().ok())
-                            {
-                                if let Some(child) = overlay.first_child() {
-                                    let mut sibling = child.next_sibling();
-                                    while let Some(widget) = sibling {
-                                        let next = widget.next_sibling();
-                                        if widget.has_css_class("preview-empty") {
-                                            widget.set_visible(false);
-                                        }
-                                        sibling = next;
+                if let Ok(texture) = gtk4::gdk::Texture::from_bytes(&bytes) {
+                    picture_clone.set_paintable(Some(&texture));
+                    // Hide the "No browser preview" overlay label on first frame
+                    if first_frame {
+                        first_frame = false;
+                        if let Some(overlay) = picture_clone
+                            .parent()
+                            .and_then(|p| p.downcast::<gtk4::Overlay>().ok())
+                        {
+                            if let Some(child) = overlay.first_child() {
+                                let mut sibling = child.next_sibling();
+                                while let Some(widget) = sibling {
+                                    let next = widget.next_sibling();
+                                    if widget.has_css_class("preview-empty") {
+                                        widget.set_visible(false);
                                     }
+                                    sibling = next;
                                 }
                             }
                         }
                     }
-                    Err(_) => {}
                 }
             }
         });
@@ -362,6 +360,7 @@ pub struct PreviewPaneWidgets {
     pub reload_btn: gtk4::Button,
     pub go_btn: gtk4::Button,
     pub devtools_btn: gtk4::ToggleButton,
+    #[allow(dead_code)]
     pub pane_id: u64,
     pub uuid: Uuid,
 }
@@ -448,6 +447,7 @@ pub fn create_preview_pane(next_pane_id: u64) -> PreviewPaneWidgets {
 
 /// Update the preview pane overlay to show the given state.
 /// Removes existing status overlays and adds the appropriate label.
+#[allow(dead_code)] // wired by browser menu items (menus.rs TODO)
 pub fn update_preview_overlay(overlay: &gtk4::Overlay, state: &PreviewState) {
     // Remove existing overlay children (status labels).
     // Walk siblings after the main child (Picture) and remove any status labels.

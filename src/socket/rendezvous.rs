@@ -45,52 +45,50 @@ pub fn signal(name: &str) {
 /// timeout.
 pub async fn wait(name: &str, timeout: std::time::Duration) -> Result<(), ()> {
     let deadline = tokio::time::Instant::now() + timeout;
-    loop {
-        // Fast path / latch consumption.
-        let notify = {
-            let mut reg = lock();
-            let entry = reg.entry(name.to_string()).or_insert_with(|| Entry {
-                latched: false,
-                notify: Arc::new(tokio::sync::Notify::new()),
-            });
+
+    // Fast path / latch consumption.
+    let notify = {
+        let mut reg = lock();
+        let entry = reg.entry(name.to_string()).or_insert_with(|| Entry {
+            latched: false,
+            notify: Arc::new(tokio::sync::Notify::new()),
+        });
+        if entry.latched {
+            entry.latched = false;
+            return Ok(());
+        }
+        entry.notify.clone()
+    };
+
+    // Register interest BEFORE re-checking, so a signal that fires between
+    // the check above and the await below is not lost: signal() latches
+    // first, so the re-check always observes it.
+    let notified = notify.notified();
+    tokio::pin!(notified);
+    notified.as_mut().enable();
+
+    // Re-check the latch now that interest is registered — closes the
+    // check-then-wait race.
+    {
+        let mut reg = lock();
+        if let Some(entry) = reg.get_mut(name) {
             if entry.latched {
                 entry.latched = false;
                 return Ok(());
             }
-            entry.notify.clone()
-        };
+        }
+    }
 
-        // Register interest BEFORE re-checking, so a signal that fires
-        // between the check above and the await below is not lost:
-        // signal() latches first, so the re-check (next loop iteration
-        // after notify) always observes it.
-        let notified = notify.notified();
-        tokio::pin!(notified);
-        notified.as_mut().enable();
-
-        // Re-check the latch now that interest is registered — closes the
-        // check-then-wait race.
-        {
+    match tokio::time::timeout_at(deadline, notified).await {
+        Ok(()) => {
+            // Woken by signal(); consume the latch if we're first.
             let mut reg = lock();
             if let Some(entry) = reg.get_mut(name) {
-                if entry.latched {
-                    entry.latched = false;
-                    return Ok(());
-                }
+                entry.latched = false;
             }
+            Ok(())
         }
-
-        match tokio::time::timeout_at(deadline, notified).await {
-            Ok(()) => {
-                // Woken by signal(); consume the latch if we're first.
-                let mut reg = lock();
-                if let Some(entry) = reg.get_mut(name) {
-                    entry.latched = false;
-                }
-                return Ok(());
-            }
-            Err(_) => return Err(()),
-        }
+        Err(_) => Err(()),
     }
 }
 

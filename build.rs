@@ -1,3 +1,6 @@
+// Build script: a panic here fails the build, which is the correct
+// behavior — the no-panic policy applies to the app, not to build.rs.
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use std::env;
 use std::path::PathBuf;
 

@@ -11,6 +11,7 @@ use serde_json::{json, Value};
 
 /// The closed set of top-level error codes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // full vocabulary; handlers adopt codes incrementally
 pub enum ErrorCode {
     /// The request line was not valid JSON.
     ParseError,

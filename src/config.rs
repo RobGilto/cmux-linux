@@ -155,6 +155,7 @@ pub struct UiConfig {
 /// Header bar configuration -- [ui.header_bar] in config.toml (D-16).
 /// Requires app restart to take effect.
 #[derive(serde::Deserialize, Debug)]
+#[allow(dead_code)] // buttons_* consumed only when style="custom" is implemented
 pub struct HeaderBarConfig {
     /// "gtk" (default, full header bar), "custom" (user-specified buttons), "none" (no header bar)
     #[serde(default = "default_header_style")]

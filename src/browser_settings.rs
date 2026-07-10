@@ -6,6 +6,7 @@
 //! a minimal patch on save. The dialog is intentionally simple — full
 //! preferences live in the text editor invoked by win.preferences.
 
+#![allow(deprecated)] // FileChooserNative → FileDialog migration is queued
 use gtk4::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;

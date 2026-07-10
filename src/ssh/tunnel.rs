@@ -1,4 +1,4 @@
-use crate::ssh::bridge::{SshBridge, WriteRequest};
+use crate::ssh::bridge::SshBridge;
 use crate::ssh::{SshEvent, SshEventTx};
 use crate::workspace::ConnectionState;
 use base64::Engine;
@@ -485,8 +485,8 @@ mod tests {
 
     #[test]
     fn test_max_retries_is_reasonable() {
-        assert!(MAX_RETRIES >= 5, "too few retries");
-        assert!(MAX_RETRIES <= 20, "too many retries");
+        const { assert!(MAX_RETRIES >= 5, "too few retries") };
+        const { assert!(MAX_RETRIES <= 20, "too many retries") };
     }
 
     #[test]

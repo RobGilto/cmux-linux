@@ -6,6 +6,7 @@ use std::time::Duration;
 
 /// Errors from CLI socket operations.
 #[derive(Debug)]
+#[allow(clippy::enum_variant_names)] // Error suffix is the API
 pub enum CliError {
     /// Could not connect to the socket.
     ConnectionError(String),

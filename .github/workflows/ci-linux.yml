@@ -1,0 +1,176 @@
+# Linux-first CI for the cmux-linux port (roadmap Phase 4).
+#
+# Gates every push/PR with: rustfmt, clippy (strict: -D warnings + the
+# no-panic lints), the full unit-test suite, and a release build. The heavy
+# libghostty static library is cached keyed on the ghostty submodule SHA —
+# only submodule bumps pay the Zig build.
+#
+# The headless integration job launches cmux-app under a headless Wayland
+# compositor with software GL and runs the socket-level tests_v2 subset.
+# Rendering correctness stays a hardware-verified property (llvmpipe is not
+# the NVIDIA path) — see docs/KNOWN-ISSUES.md.
+
+name: CI Linux
+
+on:
+  push:
+    branches: ["main", "master", "roadmap/**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-linux-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  ZIG_VERSION: 0.15.2
+
+jobs:
+  rust:
+    name: fmt + clippy + test + build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Checkout ghostty submodule only
+        run: git submodule update --init --force ghostty
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-4-dev libclang-dev libc++-dev libc++abi-dev \
+            libfontconfig-dev libfreetype-dev libonig-dev pkg-config
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Cache libghostty (keyed on submodule SHA)
+        id: ghostty-cache
+        uses: actions/cache@v4
+        with:
+          path: ghostty/zig-out
+          key: ghostty-${{ runner.os }}-${{ hashFiles('.git/modules/ghostty/HEAD') }}
+
+      - name: Install Zig
+        if: steps.ghostty-cache.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz" | tar -xJ
+          echo "$PWD/zig-x86_64-linux-${ZIG_VERSION}" >> "$GITHUB_PATH"
+
+      - name: Build libghostty
+        if: steps.ghostty-cache.outputs.cache-hit != 'true'
+        run: |
+          cd ghostty
+          zig build -Doptimize=ReleaseFast -Dapp-runtime=none -Demit-shared-lib=false
+
+      - name: rustfmt
+        run: cargo fmt --check
+
+      - name: clippy (strict — no-panic policy enforced)
+        run: >
+          cargo clippy --all-targets --
+          -D warnings -D clippy::unwrap_used -D clippy::expect_used
+
+      - name: Unit tests
+        run: cargo test --bin cmux-app
+
+      - name: Release build
+        run: cargo build --release --bin cmux-app --bin cmux
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: cmux-linux-binaries
+          path: |
+            target/release/cmux-app
+            target/release/cmux
+          retention-days: 7
+
+  headless-integration:
+    name: headless socket integration (tests_v2 subset)
+    runs-on: ubuntu-24.04
+    needs: rust
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: cmux-linux-binaries
+          path: bin
+
+      - name: Install runtime deps + headless compositor
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-4-1 libc++1 libc++abi1 libonig5 \
+            weston xwayland mesa-utils jq python3
+          chmod +x bin/cmux-app bin/cmux
+
+      - name: Launch under headless Weston (software GL)
+        run: |
+          export XDG_RUNTIME_DIR=/tmp/xdg
+          mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
+          weston --backend=headless --socket=wayland-ci &
+          sleep 2
+          export WAYLAND_DISPLAY=wayland-ci
+          export LIBGL_ALWAYS_SOFTWARE=1
+          export GDK_BACKEND=wayland
+          ./bin/cmux-app --fresh > /tmp/cmux-ci.log 2>&1 &
+          for i in $(seq 1 30); do
+            ./bin/cmux ping && break
+            sleep 1
+          done
+          ./bin/cmux ping
+
+      - name: Socket-level integration tests
+        run: |
+          export XDG_RUNTIME_DIR=/tmp/xdg
+          export PATH="$PWD/bin:$PATH"
+          # Socket API subset: orchestration verbs work headlessly even if
+          # llvmpipe rendering differs from the NVIDIA target.
+          python3 tests_v2/test_orchestration_v3.py
+
+      - name: Upload app log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cmux-ci-log
+          path: /tmp/cmux-ci.log
+
+  nightly-appimage:
+    name: nightly AppImage
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    needs: rust
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Build AppImage
+        run: |
+          git submodule update --init --force ghostty
+          ./scripts/build-appimage.sh || echo "::warning::AppImage build failed (non-blocking)"
+      - name: Upload AppImage
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cmux-full-x86_64.AppImage
+          path: dist/cmux-full-x86_64.AppImage
+          retention-days: 14
+          if-no-files-found: warn

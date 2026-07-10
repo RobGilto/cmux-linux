@@ -157,6 +157,7 @@ impl SplitNode {
     }
 
     /// Collect all surfaces into a Vec (for ghostty_surface_free on workspace close).
+    #[allow(dead_code)] // kept: session-restore/debug API surface
     pub fn collect_surfaces(&self, out: &mut Vec<ffi::ghostty_surface_t>) {
         match self {
             SplitNode::Leaf { surface, .. } => out.push(*surface),
@@ -202,6 +203,7 @@ impl SplitNode {
     }
 
     /// Find the ghostty surface handle for the leaf matching target_uuid (UUID string).
+    #[allow(dead_code)] // kept: session-restore/debug API surface
     pub fn find_by_uuid(&self, target_uuid: &str) -> Option<ffi::ghostty_surface_t> {
         match self {
             SplitNode::Leaf { uuid, surface, .. } => {
@@ -333,7 +335,7 @@ impl SplitEngine {
         app: gtk4::Application,
         ghostty_app: ffi::ghostty_app_t,
         initial_gl_area: gtk4::GLArea,
-        initial_surface_cell: std::rc::Rc<std::cell::RefCell<Option<ffi::ghostty_surface_t>>>,
+        _initial_surface_cell: std::rc::Rc<std::cell::RefCell<Option<ffi::ghostty_surface_t>>>,
         pane_id: u64,
     ) -> Self {
         // The initial surface may not be realized yet. SplitEngine stores the cell
@@ -361,10 +363,12 @@ impl SplitEngine {
 
     /// Update the surface pointer for a leaf after realize.
     /// Recursively searches the tree (D-10: works for ALL leaves, not just root).
+    #[allow(dead_code)] // kept: session-restore/debug API surface
     pub fn set_initial_surface(&mut self, pane_id: u64, surface: ffi::ghostty_surface_t) {
         Self::set_surface_recursive(&mut self.root, pane_id, surface);
     }
 
+    #[allow(dead_code)]
     fn set_surface_recursive(
         node: &mut SplitNode,
         target_pane_id: u64,
@@ -703,7 +707,7 @@ impl SplitEngine {
             has_attention: false,
         };
 
-        let _replaced = self.replace_leaf_with_split(active_id, new_leaf, orientation)?;
+        self.replace_leaf_with_split(active_id, new_leaf, orientation)?;
 
         // If the root was a Leaf, it's now a Split whose Paned has no parent.
         // Re-parent the new Paned root into the GtkStack page we saved above.
@@ -724,6 +728,7 @@ impl SplitEngine {
     }
 
     /// Allocate the next available pane ID (used by browser preview pane creation).
+    #[allow(dead_code)]
     pub fn allocate_pane_id(&mut self) -> u64 {
         let id = self.next_pane_id;
         self.next_pane_id += 1;
@@ -790,7 +795,7 @@ impl SplitEngine {
         };
 
         // Replace active leaf with Split(active_leaf, preview_node) -- vertical, preview on right
-        let _replaced = self.replace_leaf_with_split(
+        self.replace_leaf_with_split(
             active_id,
             preview_node,
             gtk4::Orientation::Horizontal, // Horizontal paned = side-by-side (left terminal, right preview)
@@ -1003,9 +1008,8 @@ impl SplitEngine {
         // Capture the raw GLArea pointer BEFORE the tree removal drops the GObject.
         // GL_AREA_REGISTRY holds raw pointers; once GTK finalizes the GObject the
         // pointer becomes dangling. Remove it here while the GLArea is still alive.
-        let raw_gl_area: Option<*mut gtk4::ffi::GtkGLArea> = self
-            .find_gl_area(active_id)
-            .map(|a| a.as_ptr() as *mut gtk4::ffi::GtkGLArea);
+        let raw_gl_area: Option<*mut gtk4::ffi::GtkGLArea> =
+            self.find_gl_area(active_id).map(|a| a.as_ptr());
 
         // Remove the leaf from the tree and get the surviving sibling's pane_id.
         let surviving_id = remove_leaf_from_tree(&mut self.root, active_id)?;
@@ -1080,6 +1084,7 @@ impl SplitEngine {
 
     /// Update the surface pointer for a pane after its GLArea realize callback fires.
     /// Called by Plan 04 wiring after SURFACE_REGISTRY is populated.
+    #[allow(dead_code)]
     pub fn update_surface(&mut self, pane_id: u64, surface: ffi::ghostty_surface_t) {
         update_surface_in_tree(&mut self.root, pane_id, surface);
     }
@@ -1124,6 +1129,7 @@ impl SplitEngine {
     }
 
     /// Look up a surface by its UUID string. Returns the ghostty surface handle if found.
+    #[allow(dead_code)]
     pub fn find_surface_by_uuid(&self, target_uuid: &str) -> Option<ffi::ghostty_surface_t> {
         self.root.find_by_uuid(target_uuid)
     }
@@ -1344,6 +1350,7 @@ fn find_url_entry_in_tree(node: &SplitNode, pane_id: u64) -> Option<gtk4::Entry>
     }
 }
 
+#[allow(dead_code)] // kept: session-restore/debug API surface
 fn update_surface_in_tree(node: &mut SplitNode, pane_id: u64, surface: ffi::ghostty_surface_t) {
     match node {
         SplitNode::Leaf {
@@ -1818,5 +1825,143 @@ mod tests {
         } else {
             panic!("v1 deserialize changed variant");
         }
+    }
+}
+
+#[cfg(test)]
+mod data_tests {
+    use super::*;
+
+    fn leaf(pane: u64) -> SplitNodeData {
+        SplitNodeData::Leaf {
+            pane_id: pane,
+            surface_uuid: Uuid::new_v4(),
+            shell: "/bin/bash".into(),
+            cwd: "/tmp".into(),
+            agent_provider: None,
+            agent_session_id: None,
+        }
+    }
+
+    #[test]
+    fn leaf_serde_roundtrip() {
+        let node = leaf(42);
+        let json = serde_json::to_string(&node).expect("serialize");
+        let back: SplitNodeData = serde_json::from_str(&json).expect("deserialize");
+        match back {
+            SplitNodeData::Leaf { pane_id, shell, .. } => {
+                assert_eq!(pane_id, 42);
+                assert_eq!(shell, "/bin/bash");
+            }
+            _ => panic!("expected leaf"),
+        }
+    }
+
+    #[test]
+    fn split_serde_roundtrip_preserves_ratio() {
+        let node = SplitNodeData::Split {
+            orientation: "horizontal".into(),
+            ratio: 0.25,
+            start: Box::new(leaf(1)),
+            end: Box::new(leaf(2)),
+        };
+        let json = serde_json::to_string(&node).expect("serialize");
+        let back: SplitNodeData = serde_json::from_str(&json).expect("deserialize");
+        match back {
+            SplitNodeData::Split {
+                ratio, orientation, ..
+            } => {
+                assert!((ratio - 0.25).abs() < 1e-9);
+                assert_eq!(orientation, "horizontal");
+            }
+            _ => panic!("expected split"),
+        }
+    }
+
+    #[test]
+    fn ratio_defaults_when_absent() {
+        // Old session files predate the ratio field: strip it and reload.
+        let node = SplitNodeData::Split {
+            orientation: "vertical".into(),
+            ratio: 0.9,
+            start: Box::new(leaf(1)),
+            end: Box::new(leaf(2)),
+        };
+        let mut v: serde_json::Value = serde_json::to_value(&node).expect("to_value");
+        // Remove `ratio` wherever the tagging scheme put it.
+        let obj = v.as_object_mut().expect("object");
+        if !obj.contains_key("ratio") {
+            for (_, inner) in obj.iter_mut() {
+                if let Some(io) = inner.as_object_mut() {
+                    io.remove("ratio");
+                }
+            }
+        } else {
+            obj.remove("ratio");
+        }
+        let back: SplitNodeData = serde_json::from_value(v).expect("deserialize");
+        match back {
+            SplitNodeData::Split { ratio, .. } => assert!((ratio - 0.5).abs() < 1e-9),
+            _ => panic!("expected split"),
+        }
+    }
+
+    #[test]
+    fn agent_fields_skip_when_none_survive_when_set() {
+        let json = serde_json::to_string(&leaf(1)).expect("ser");
+        assert!(
+            !json.contains("agent_provider"),
+            "None must be omitted: {json}"
+        );
+
+        let node = SplitNodeData::Leaf {
+            pane_id: 2,
+            surface_uuid: Uuid::new_v4(),
+            shell: String::new(),
+            cwd: String::new(),
+            agent_provider: Some("claude".into()),
+            agent_session_id: Some("sid".into()),
+        };
+        let json = serde_json::to_string(&node).expect("ser");
+        assert!(json.contains("\"agent_provider\":\"claude\""));
+        let back: SplitNodeData = serde_json::from_str(&json).expect("de");
+        match back {
+            SplitNodeData::Leaf {
+                agent_session_id, ..
+            } => {
+                assert_eq!(agent_session_id.as_deref(), Some("sid"));
+            }
+            _ => panic!("expected leaf"),
+        }
+    }
+
+    #[test]
+    fn nested_tree_roundtrip() {
+        let node = SplitNodeData::Split {
+            orientation: "horizontal".into(),
+            ratio: 0.5,
+            start: Box::new(SplitNodeData::Split {
+                orientation: "vertical".into(),
+                ratio: 0.5,
+                start: Box::new(leaf(1)),
+                end: Box::new(leaf(2)),
+            }),
+            end: Box::new(leaf(3)),
+        };
+        let json = serde_json::to_string(&node).expect("ser");
+        let back: SplitNodeData = serde_json::from_str(&json).expect("de");
+        let mut ids = Vec::new();
+        fn collect(n: &SplitNodeData, out: &mut Vec<u64>) {
+            match n {
+                SplitNodeData::Leaf { pane_id, .. } => out.push(*pane_id),
+                SplitNodeData::Split { start, end, .. } => {
+                    collect(start, out);
+                    collect(end, out);
+                }
+                _ => {}
+            }
+        }
+        collect(&back, &mut ids);
+        assert_eq!(ids, vec![1, 2, 3]);
     }
 }

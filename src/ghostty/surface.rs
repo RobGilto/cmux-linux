@@ -215,7 +215,7 @@ pub fn create_surface(
                 let mut surface_config = if let Some(ic) = inherited_config {
                     ic // already owned by value — no dangling pointer
                 } else {
-                    unsafe { ffi::ghostty_surface_config_new() }
+                    ffi::ghostty_surface_config_new()
                 };
 
                 surface_config.platform_tag = ffi::ghostty_platform_e_GHOSTTY_PLATFORM_GTK4;
@@ -323,7 +323,7 @@ pub fn create_surface(
             // otherwise accumulate duplicate entries, causing wakeup_cb to
             // queue_render() the same area N times per wakeup.
             if let Ok(mut areas) = callbacks::GL_AREA_REGISTRY.lock() {
-                let raw_ptr = area.as_ptr() as *mut gtk4::ffi::GtkGLArea;
+                let raw_ptr = area.as_ptr();
                 if !areas.iter().any(|p| p.0 == raw_ptr) {
                     areas.push(callbacks::GtkGLAreaPtr(raw_ptr));
                 }
@@ -363,7 +363,7 @@ pub fn create_surface(
             // Drop this GLArea from the wakeup registry FIRST — wakeup_cb runs
             // off the main thread and is the loudest stale-pointer consumer.
             // The free-surface block below tears down ghostty state next.
-            let area_raw = area.as_ptr() as *mut gtk4::ffi::GtkGLArea;
+            let area_raw = area.as_ptr();
             if let Ok(mut areas) = callbacks::GL_AREA_REGISTRY.lock() {
                 areas.retain(|p| p.0 != area_raw);
             }

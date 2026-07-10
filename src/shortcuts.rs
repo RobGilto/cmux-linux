@@ -202,7 +202,7 @@ pub fn handle_split(state: &Rc<RefCell<AppState>>, vertical: bool) {
 
 /// Close the active pane (Ctrl+Shift+X).
 pub fn handle_close_pane(state: &Rc<RefCell<AppState>>, app: &gtk4::Application) {
-    let (close_workspace, active_index) = {
+    let (close_workspace, _active_index) = {
         let mut s = state.borrow_mut();
         if let Some(engine) = s.active_split_engine_mut() {
             match engine.close_active() {
