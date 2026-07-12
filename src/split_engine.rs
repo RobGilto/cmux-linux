@@ -189,6 +189,26 @@ impl SplitNode {
         }
     }
 
+    /// Find a pane's own GTK widget by pane_id — the GLArea for a Leaf, or
+    /// the container Box for a Preview (browser) pane. Used by pane zoom to
+    /// pull a specific pane's widget out of the tree regardless of node
+    /// type, unlike `find_gl_area_in_tree` which only covers Leaf.
+    pub fn find_widget_for_pane(&self, target_id: u64) -> Option<gtk4::Widget> {
+        match self {
+            SplitNode::Leaf { pane_id, gl_area, .. } if *pane_id == target_id => {
+                Some(gl_area.clone().upcast())
+            }
+            SplitNode::Leaf { .. } => None,
+            SplitNode::Preview {
+                pane_id, container, ..
+            } if *pane_id == target_id => Some(container.clone().upcast()),
+            SplitNode::Preview { .. } => None,
+            SplitNode::Split { start, end, .. } => start
+                .find_widget_for_pane(target_id)
+                .or_else(|| end.find_widget_for_pane(target_id)),
+        }
+    }
+
     /// Collect (uuid, pane_id, active) for all leaves in this subtree.
     pub fn collect_pane_info(&self, out: &mut Vec<(Uuid, u64, bool)>, active_id: u64) {
         match self {
@@ -335,6 +355,29 @@ pub struct SplitEngine {
     /// orchestrator/lead/worker fan-out expects. `None` until the first
     /// `spiral_split` call, at which point it defaults to `active_pane_id`.
     spiral_tail_pane_id: Option<u64>,
+    /// Set while a pane fills the whole workspace (Ctrl+Alt+F), hiding its
+    /// siblings without disturbing the underlying split tree or mutating
+    /// `root`. See `ZoomState`'s own doc comment.
+    zoomed: Option<ZoomState>,
+}
+
+/// Bookkeeping for a zoomed pane, so `unzoom` can put it back exactly where
+/// it was. The `SplitNode` tree (`SplitEngine::root`) is never mutated by
+/// zoom/unzoom — only which widgets are attached to the workspace's GtkStack
+/// page changes. Zooming pulls the zoomed pane's widget out of the tree and
+/// shows it alone; the rest of the tree is kept alive off-stack (not
+/// destroyed) via `root_widget`, and every pane in it is marked in
+/// `PRESERVE_ON_UNREALIZE` before detaching so none of their live processes
+/// get killed by the resulting unrealize (same mechanism as split/close).
+struct ZoomState {
+    pane_id: u64,
+    /// The whole original tree's root widget (what the GtkStack page showed
+    /// before zooming), detached and held alive here while zoomed.
+    root_widget: gtk4::Widget,
+    /// Direct parent Paned the zoomed pane's widget was pulled out of, and
+    /// which slot it occupied — unzoom puts it straight back.
+    parent_paned: gtk4::Paned,
+    was_start_child: bool,
 }
 
 impl SplitEngine {
@@ -368,6 +411,7 @@ impl SplitEngine {
             app,
             ghostty_app,
             spiral_tail_pane_id: None,
+            zoomed: None,
         }
     }
 
@@ -429,6 +473,7 @@ impl SplitEngine {
             app,
             ghostty_app,
             spiral_tail_pane_id: None,
+            zoomed: None,
         })
     }
 
@@ -709,6 +754,7 @@ impl SplitEngine {
     }
 
     pub fn split_active(&mut self, orientation: gtk4::Orientation) -> Option<u64> {
+        self.unzoom_if_needed();
         let active_id = self.active_pane_id;
         let new_pane_id = self.next_pane_id;
         self.next_pane_id += 1;
@@ -813,6 +859,7 @@ impl SplitEngine {
     /// Returns (new_pane_id, picture_widget, url_entry) so the caller can wire streaming and URL navigation.
     /// The active terminal pane stays on the left and retains focus.
     pub fn split_active_with_preview(&mut self) -> Option<crate::browser::PreviewPaneWidgets> {
+        self.unzoom_if_needed();
         let active_id = self.active_pane_id;
         let new_pane_id = self.next_pane_id;
         self.next_pane_id += 1;
@@ -1062,10 +1109,114 @@ impl SplitEngine {
         replace_in_tree(&mut self.root, target_pane_id, &mut replacer)
     }
 
+    /// The pane_id currently filling the whole workspace (Ctrl+Alt+F), if any.
+    pub fn zoomed_pane_id(&self) -> Option<u64> {
+        self.zoomed.as_ref().map(|z| z.pane_id)
+    }
+
+    /// Toggle whether the active pane fills the whole workspace, hiding
+    /// (not destroying) every other pane in it. Zooming a single-pane
+    /// workspace (nothing to hide) is a no-op. Returns the new zoomed
+    /// state.
+    pub fn toggle_zoom(&mut self) -> bool {
+        if self.zoomed.is_some() {
+            self.unzoom();
+        } else {
+            self.zoom_active_pane();
+        }
+        self.zoomed.is_some()
+    }
+
+    /// If a pane is zoomed, restore the full layout. No-op otherwise. Used
+    /// as a guard before any operation that mutates the split tree
+    /// (split/close) — those assume the tree's widgets are attached the way
+    /// `root` describes, which zoom's temporary detach violates.
+    pub fn unzoom_if_needed(&mut self) {
+        if self.zoomed.is_some() {
+            self.unzoom();
+        }
+    }
+
+    fn zoom_active_pane(&mut self) {
+        // Nothing to hide in a single-pane workspace.
+        if matches!(
+            self.root,
+            SplitNode::Leaf { .. } | SplitNode::Preview { .. }
+        ) {
+            return;
+        }
+        let pane_id = self.active_pane_id;
+        let Some(pane_widget) = self.root.find_widget_for_pane(pane_id) else {
+            return;
+        };
+        let Some((parent_paned, was_start_child)) = find_parent_paned(&self.root, pane_id) else {
+            return;
+        };
+        let root_widget = self.root.widget();
+        let Some(stack_widget) = root_widget.parent() else {
+            return;
+        };
+
+        // Detaching root_widget from the stack unrealizes every pane in the
+        // tree (the zoomed one included — replace_child_in_parent pulls it
+        // out of parent_paned too). Mark all of them so none get their live
+        // processes killed; the zoomed pane's own realize (moments later,
+        // as the stack's new page) picks its preserved surface back up the
+        // same way a regular split/close reparent does.
+        mark_subtree_preserve_on_unrealize(&self.root);
+        replace_child_in_parent(&stack_widget, &root_widget, &pane_widget);
+
+        self.zoomed = Some(ZoomState {
+            pane_id,
+            root_widget,
+            parent_paned,
+            was_start_child,
+        });
+    }
+
+    fn unzoom(&mut self) {
+        let Some(zoom) = self.zoomed.take() else {
+            return;
+        };
+        let Some(pane_widget) = self.root.find_widget_for_pane(zoom.pane_id) else {
+            return;
+        };
+        let Some(stack) = pane_widget
+            .parent()
+            .and_then(|p| p.downcast::<gtk4::Stack>().ok())
+        else {
+            return;
+        };
+        let Some(name) = stack.page(&pane_widget).name().map(|n| n.to_string()) else {
+            return;
+        };
+
+        // Reattaching pane_widget into its original slot leaves the stack
+        // (unrealize — mark it preserved first) before entering parent_paned,
+        // which is itself still detached/unrealized until root_widget goes
+        // back on the stack below, at which point the whole subtree
+        // (pane_widget included) realizes again in one shot.
+        if let Some(gl_area) = self.find_gl_area(zoom.pane_id) {
+            mark_preserve_on_unrealize(&gl_area);
+        }
+        // GTK4 requires a widget be unparented before set_start/end_child
+        // accepts it — pane_widget is still the stack's page here.
+        remove_widget_from_parent(&pane_widget);
+        if zoom.was_start_child {
+            zoom.parent_paned.set_start_child(Some(&pane_widget));
+        } else {
+            zoom.parent_paned.set_end_child(Some(&pane_widget));
+        }
+        remove_widget_from_parent(&zoom.root_widget);
+        stack.add_named(&zoom.root_widget, Some(&name));
+        stack.set_visible_child_name(&name);
+    }
+
     /// Close the active pane (Ctrl+Shift+X per UI-SPEC).
     /// Removes the active leaf, replaces its parent Split with the surviving sibling.
     /// Returns the new active pane_id, or None if this was the last pane.
     pub fn close_active(&mut self) -> Option<u64> {
+        self.unzoom_if_needed();
         let active_id = self.active_pane_id;
 
         // Cannot close the last pane — workspace close is handled at AppState level.
@@ -1505,6 +1656,40 @@ fn mark_subtree_preserve_on_unrealize(node: &SplitNode) {
             mark_subtree_preserve_on_unrealize(start);
             mark_subtree_preserve_on_unrealize(end);
         }
+    }
+}
+
+/// Find `target_id`'s direct parent Paned in the tree, and which slot
+/// (`true` = start, `false` = end) it occupies. Used by pane zoom to pull a
+/// pane's widget out and, on unzoom, put it back in exactly the same spot —
+/// the `SplitNode` tree itself never changes shape during zoom/unzoom, so
+/// this is purely a widget-attachment lookup, not a tree mutation.
+fn find_parent_paned(node: &SplitNode, target_id: u64) -> Option<(gtk4::Paned, bool)> {
+    if let SplitNode::Split {
+        start, end, paned, ..
+    } = node
+    {
+        let start_is_target = match start.as_ref() {
+            SplitNode::Leaf { pane_id, .. } | SplitNode::Preview { pane_id, .. } => {
+                *pane_id == target_id
+            }
+            _ => false,
+        };
+        if start_is_target {
+            return Some((paned.clone(), true));
+        }
+        let end_is_target = match end.as_ref() {
+            SplitNode::Leaf { pane_id, .. } | SplitNode::Preview { pane_id, .. } => {
+                *pane_id == target_id
+            }
+            _ => false,
+        };
+        if end_is_target {
+            return Some((paned.clone(), false));
+        }
+        find_parent_paned(start, target_id).or_else(|| find_parent_paned(end, target_id))
+    } else {
+        None
     }
 }
 

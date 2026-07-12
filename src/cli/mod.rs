@@ -221,6 +221,15 @@ pub enum Commands {
         /// Surface UUID
         id: String,
     },
+    /// Toggle a pane filling the whole workspace, hiding its siblings
+    /// without disturbing the underlying split layout (Ctrl+Alt+F in the
+    /// GUI). No id un-zooms whichever pane is currently zoomed, or zooms
+    /// the active pane if none is.
+    Zoom {
+        /// Surface UUID to target (default: active pane)
+        #[arg(long)]
+        id: Option<String>,
+    },
     /// Close a surface by ID, or the active pane if no ID is given.
     #[command(alias = "close")]
     CloseSurface {
@@ -1158,6 +1167,13 @@ fn command_to_rpc(cmd: &Commands) -> (&'static str, serde_json::Value) {
             ("surface.spawn", Value::Object(p))
         }
         Commands::FocusSurface { id } => ("surface.focus", json!({"id": id})),
+        Commands::Zoom { id } => {
+            let mut p = serde_json::Map::new();
+            if let Some(ref id) = id {
+                p.insert("id".into(), json!(id));
+            }
+            ("surface.zoom", Value::Object(p))
+        }
         Commands::CloseSurface { id, force } => {
             let mut p = serde_json::Map::new();
             if let Some(ref id) = id {

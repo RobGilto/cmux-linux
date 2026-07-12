@@ -136,6 +136,11 @@ pub fn install_shortcuts(
                     handle_browser_close(&state);
                     gtk4::glib::Propagation::Stop
                 }
+                // -- Pane zoom --
+                Some(ShortcutAction::ToggleZoom) => {
+                    handle_toggle_zoom(&state);
+                    gtk4::glib::Propagation::Stop
+                }
                 // Everything else passes through to Ghostty.
                 _ => gtk4::glib::Propagation::Proceed,
             }
@@ -228,6 +233,14 @@ pub fn handle_focus_direction(state: &Rc<RefCell<AppState>>, direction: FocusDir
     let mut s = state.borrow_mut();
     if let Some(engine) = s.active_split_engine_mut() {
         engine.focus_next_in_direction(direction);
+    }
+}
+
+/// Toggle the active pane filling the whole workspace (Ctrl+Alt+F).
+pub fn handle_toggle_zoom(state: &Rc<RefCell<AppState>>) {
+    let mut s = state.borrow_mut();
+    if let Some(engine) = s.active_split_engine_mut() {
+        engine.toggle_zoom();
     }
 }
 

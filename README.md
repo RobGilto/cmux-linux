@@ -134,6 +134,7 @@ cmux list-surfaces             # list terminal surfaces
 cmux split --direction horizontal  # split current pane
 cmux spawn                     # add a pane via fibonacci/spiral auto-layout (no direction arg)
 cmux close                     # remove the active pane (or: cmux close-surface <uuid>)
+cmux zoom                      # toggle the active pane filling the whole workspace
 cmux list-panes                # list all panes
 
 # System
@@ -171,6 +172,16 @@ spiral, and becomes the new spiral tail for subsequent no-id spawns.
 pane — if that was the spiral tail, the next `spawn` falls back to
 whichever pane is currently active. Pass a uuid (`close-surface <uuid>`) to
 close a specific pane instead.
+
+### Pane zoom
+
+Once a spiral fan-out has made panes too small to read, `cmux zoom [--id
+<uuid>]` (Ctrl+Alt+F in the GUI) toggles one pane to fill the whole
+workspace, hiding its siblings without touching the underlying split
+layout — toggling again restores everything exactly as it was, sizes
+included. `zoomed` shows up per-pane in `list-surfaces`. Hidden panes'
+processes stay alive throughout. Splitting, spawning, or closing while
+zoomed auto-restores the full layout first.
 
 `cmux close` refuses to close the pane it's running in — that pane's shell
 (and the `cmux close` process as its child) would be killed mid-call,

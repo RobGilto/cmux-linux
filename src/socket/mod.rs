@@ -444,6 +444,11 @@ async fn dispatch_line(
                 .to_string(),
             resp_tx,
         },
+        "surface.zoom" => commands::SocketCommand::SurfaceZoom {
+            req_id: req_id.clone(),
+            id: params.get("id").and_then(|v| v.as_str()).map(String::from),
+            resp_tx,
+        },
         "surface.close" => commands::SocketCommand::SurfaceClose {
             req_id: req_id.clone(),
             id: params.get("id").and_then(|v| v.as_str()).map(String::from),

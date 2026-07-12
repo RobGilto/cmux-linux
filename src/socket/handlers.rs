@@ -338,6 +338,7 @@ pub fn handle_socket_command(cmd: SocketCommand, state: &crate::app_state::AppSt
                 "surface.list",
                 "surface.split",
                 "surface.spawn",
+                "surface.zoom",
                 "surface.focus",
                 "surface.close",
                 "surface.send_text",
@@ -805,11 +806,13 @@ pub fn handle_socket_command(cmd: SocketCommand, state: &crate::app_state::AppSt
             for (ws_idx, (ws, engine)) in
                 s.workspaces.iter().zip(s.split_engines.iter()).enumerate()
             {
+                let zoomed_pane_id = engine.zoomed_pane_id();
                 for (pane_uuid, pane_id, active) in engine.all_panes() {
                     panes.push(json!({
                         "uuid": pane_uuid.to_string(),
                         "workspace_uuid": ws.uuid.to_string(),
                         "active": active && ws_idx == s.active_index,
+                        "zoomed": zoomed_pane_id == Some(pane_id),
                         // Last SET_TITLE the surface reported (null = none yet)
                         "title": s.surface_titles.get(&pane_id),
                     }));
@@ -1127,6 +1130,35 @@ pub fn handle_socket_command(cmd: SocketCommand, state: &crate::app_state::AppSt
             }
         }
 
+        SocketCommand::SurfaceZoom { req_id, id, resp_tx } => {
+            let mut s = state.borrow_mut();
+            let idx = s.active_index;
+            let Some(engine) = s.split_engines.get_mut(idx) else {
+                drop(s);
+                let _ = resp_tx.send(err(req_id, "not_found", "no active workspace"));
+                return;
+            };
+            // An explicit id targets that pane; with no id, toggling either
+            // zooms the active pane or un-zooms whichever is currently
+            // zoomed (toggle_zoom() itself decides which, based on state).
+            if let Some(ref uuid_str) = id {
+                match engine.find_pane_id_by_uuid(uuid_str) {
+                    Some(pid) => {
+                        engine.active_pane_id = pid;
+                        engine.root.update_focus_css(pid);
+                    }
+                    None => {
+                        drop(s);
+                        let _ = resp_tx.send(err(req_id, "not_found", "surface not found"));
+                        return;
+                    }
+                }
+            }
+            let zoomed = engine.toggle_zoom();
+            drop(s);
+            let _ = resp_tx.send(ok(req_id, json!({"zoomed": zoomed})));
+        }
+
         SocketCommand::SurfaceClose {
             req_id,
             id,
@@ -1396,11 +1428,13 @@ pub fn handle_socket_command(cmd: SocketCommand, state: &crate::app_state::AppSt
             for (ws_idx, (ws, engine)) in
                 s.workspaces.iter().zip(s.split_engines.iter()).enumerate()
             {
+                let zoomed_pane_id = engine.zoomed_pane_id();
                 for (pane_uuid, pane_id, active) in engine.all_panes() {
                     panes.push(json!({
                         "uuid": pane_uuid.to_string(),
                         "workspace_uuid": ws.uuid.to_string(),
                         "active": active && ws_idx == s.active_index,
+                        "zoomed": zoomed_pane_id == Some(pane_id),
                         // Last SET_TITLE the surface reported (null = none yet)
                         "title": s.surface_titles.get(&pane_id),
                     }));

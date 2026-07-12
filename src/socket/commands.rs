@@ -106,6 +106,15 @@ pub enum SocketCommand {
         id: String,
         resp_tx: RespTx,
     },
+    /// Toggle whether a pane fills the whole workspace, hiding its siblings
+    /// without disturbing the underlying split layout. `id` targets a
+    /// specific pane; `None` toggles zoom on the active pane (or un-zooms
+    /// whichever pane is currently zoomed, if any).
+    SurfaceZoom {
+        req_id: Value,
+        id: Option<String>,
+        resp_tx: RespTx,
+    },
     SurfaceClose {
         req_id: Value,
         /// None closes the active pane in the active workspace.

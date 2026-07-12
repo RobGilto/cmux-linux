@@ -497,6 +497,7 @@ fn build_shortcuts_window() -> gtk4::ShortcutsWindow {
     pane_group.add_shortcut(&shortcut("<Ctrl><Shift>Right", "Focus Right"));
     pane_group.add_shortcut(&shortcut("<Ctrl><Shift>Up", "Focus Up"));
     pane_group.add_shortcut(&shortcut("<Ctrl><Shift>Down", "Focus Down"));
+    pane_group.add_shortcut(&shortcut("<Ctrl><Alt>f", "Toggle Zoom"));
     pane_section.add_group(&pane_group);
     window.add_section(&pane_section);
 
