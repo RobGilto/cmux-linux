@@ -337,6 +337,7 @@ pub fn handle_socket_command(cmd: SocketCommand, state: &crate::app_state::AppSt
                 "workspace.reorder",
                 "surface.list",
                 "surface.split",
+                "surface.spawn",
                 "surface.focus",
                 "surface.close",
                 "surface.send_text",
@@ -988,6 +989,111 @@ pub fn handle_socket_command(cmd: SocketCommand, state: &crate::app_state::AppSt
             }
         }
 
+        SocketCommand::SurfaceSpawn {
+            req_id,
+            id,
+            agent,
+            resp_tx,
+        } => {
+            // Fibonacci/spiral auto-split: same target-resolution and
+            // min-size guard as surface.split, but orientation is decided by
+            // SplitEngine::spiral_split (alternates automatically) instead of
+            // a caller-supplied direction.
+            const MIN_PANE_PX: i32 = 200;
+
+            let result = {
+                let mut s = state.borrow_mut();
+                let idx = s.active_index;
+                if let Some(engine) = s.split_engines.get_mut(idx) {
+                    if let Some(ref uuid_str) = id {
+                        match engine.find_pane_id_by_uuid(uuid_str) {
+                            Some(pid) => engine.active_pane_id = pid,
+                            None => {
+                                let _ = resp_tx.send(err(req_id, "not_found", "surface not found"));
+                                return;
+                            }
+                        }
+                    }
+                    // Peek the orientation spiral_split will use, to apply the
+                    // same too-small guard as surface.split.
+                    let next_orientation = if engine.spiral_split_count_even() {
+                        gtk4::Orientation::Horizontal
+                    } else {
+                        gtk4::Orientation::Vertical
+                    };
+                    if let Some((w, h)) = engine.pane_size(engine.active_pane_id) {
+                        let resulting = if next_orientation == gtk4::Orientation::Horizontal {
+                            w / 2
+                        } else {
+                            h / 2
+                        };
+                        if resulting < MIN_PANE_PX {
+                            let axis = if next_orientation == gtk4::Orientation::Horizontal {
+                                "wide"
+                            } else {
+                                "tall"
+                            };
+                            drop(s);
+                            let _ = resp_tx.send(err(
+                                req_id,
+                                "pane_too_small",
+                                &format!(
+                                    "pane not {} enough to spawn a spiral split (would leave {}px, need {}px); resize the window or close other panes",
+                                    axis, resulting, MIN_PANE_PX
+                                ),
+                            ));
+                            return;
+                        }
+                    }
+                    engine.spiral_split().and_then(|new_pane_id| {
+                        engine
+                            .all_panes()
+                            .into_iter()
+                            .find(|(_, pid, _)| *pid == new_pane_id)
+                            .map(|(uuid, _, _)| uuid.to_string())
+                    })
+                } else {
+                    None
+                }
+            };
+            match result {
+                Some(uuid_str) => {
+                    if let Some(provider) =
+                        agent.as_deref().and_then(crate::agent::Provider::from_str)
+                    {
+                        crate::agent::register(&uuid_str, provider, None, None);
+                        let session = crate::agent::AgentSession {
+                            provider,
+                            session_id: None,
+                            cwd: None,
+                        };
+                        let boot = crate::agent::startup_command(&uuid_str, &session);
+                        let state2 = state.clone();
+                        let uuid2 = uuid_str.clone();
+                        gtk4::glib::timeout_add_local_once(
+                            std::time::Duration::from_millis(700),
+                            move || {
+                                let s = state2.borrow();
+                                if let Some(surf) = resolve_surface_ptr(&s, Some(&uuid2)) {
+                                    unsafe {
+                                        surface_type_bytes(surf, format!("{boot}\n").as_bytes());
+                                    }
+                                } else {
+                                    tracing::warn!(
+                                        "surface.spawn --agent: surface {uuid2} not realized; agent not booted"
+                                    );
+                                }
+                            },
+                        );
+                    }
+                    let _ = resp_tx.send(ok(req_id, json!({"uuid": uuid_str, "agent": agent})));
+                }
+                None => {
+                    let _ = resp_tx.send(err(req_id, "split_failed", "could not spawn spiral pane"));
+                }
+            }
+        }
+
         SocketCommand::SurfaceFocus {
             req_id,
             id,
@@ -1023,12 +1129,16 @@ pub fn handle_socket_command(cmd: SocketCommand, state: &crate::app_state::AppSt
             id,
             resp_tx,
         } => {
-            // Close pane by uuid. Set it as active, then close_active().
+            // Close pane by uuid, or the active pane in the active workspace
+            // when no id is given. Set the target as active, then close_active().
             let pane_id = {
                 let s = state.borrow();
-                s.split_engines
-                    .get(s.active_index)
-                    .and_then(|engine| engine.find_pane_id_by_uuid(&id))
+                s.split_engines.get(s.active_index).and_then(|engine| {
+                    match id {
+                        Some(ref uuid_str) => engine.find_pane_id_by_uuid(uuid_str),
+                        None => Some(engine.active_pane_id),
+                    }
+                })
             };
             match pane_id {
                 Some(pid) => {

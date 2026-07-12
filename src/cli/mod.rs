@@ -179,15 +179,30 @@ pub enum Commands {
         #[arg(long)]
         agent: Option<String>,
     },
+    /// Spawn a new pane with fibonacci/spiral auto-layout — no orientation
+    /// argument. The workspace alternates orientation on each call (vertical
+    /// divider, then horizontal on what's left, then vertical again, ...),
+    /// so an orchestrator/lead/worker fan-out can call this repeatedly
+    /// without tracking layout state itself.
+    Spawn {
+        /// Target surface ID to split (default: focused/active pane)
+        #[arg(long)]
+        id: Option<String>,
+        /// Boot a provider-aware agent session in the new pane
+        /// (claude | codex | gemini | pi)
+        #[arg(long)]
+        agent: Option<String>,
+    },
     /// Focus a surface by ID
     FocusSurface {
         /// Surface UUID
         id: String,
     },
-    /// Close a surface by ID
+    /// Close a surface by ID, or the active pane if no ID is given.
+    #[command(alias = "close")]
     CloseSurface {
-        /// Surface UUID
-        id: String,
+        /// Surface UUID (default: active pane in the active workspace)
+        id: Option<String>,
     },
     /// Send text to a surface
     SendText {
@@ -1103,8 +1118,24 @@ fn command_to_rpc(cmd: &Commands) -> (&'static str, serde_json::Value) {
             }
             ("surface.split", Value::Object(p))
         }
+        Commands::Spawn { id, agent } => {
+            let mut p = serde_json::Map::new();
+            if let Some(ref id) = id {
+                p.insert("id".into(), json!(id));
+            }
+            if let Some(ref agent) = agent {
+                p.insert("agent".into(), json!(agent));
+            }
+            ("surface.spawn", Value::Object(p))
+        }
         Commands::FocusSurface { id } => ("surface.focus", json!({"id": id})),
-        Commands::CloseSurface { id } => ("surface.close", json!({"id": id})),
+        Commands::CloseSurface { id } => {
+            let mut p = serde_json::Map::new();
+            if let Some(ref id) = id {
+                p.insert("id".into(), json!(id));
+            }
+            ("surface.close", Value::Object(p))
+        }
         Commands::SendText { text, id } => {
             let mut p = serde_json::Map::new();
             p.insert("text".into(), json!(text));

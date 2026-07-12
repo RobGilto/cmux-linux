@@ -326,6 +326,10 @@ pub struct SplitEngine {
     app: gtk4::Application,
     /// Ghostty app handle needed to create new surfaces.
     ghostty_app: ffi::ghostty_app_t,
+    /// Number of `spiral_split` calls made so far in this workspace — drives
+    /// orientation alternation for fibonacci/spiral pane layout (agentic
+    /// orchestrator → lead → worker fan-out).
+    spiral_split_count: u32,
 }
 
 impl SplitEngine {
@@ -358,6 +362,7 @@ impl SplitEngine {
             next_pane_id: pane_id + 1,
             app,
             ghostty_app,
+            spiral_split_count: 0,
         }
     }
 
@@ -418,6 +423,7 @@ impl SplitEngine {
             next_pane_id,
             app,
             ghostty_app,
+            spiral_split_count: 0,
         })
     }
 
@@ -632,6 +638,36 @@ impl SplitEngine {
     /// Split the active pane downward (Ctrl+Shift+D per D-10).
     pub fn split_down(&mut self) -> Option<u64> {
         self.split_active(gtk4::Orientation::Vertical)
+    }
+
+    /// Fibonacci/spiral auto-split: no orientation argument. Alternates
+    /// orientation on each call (vertical divider first — left/right — then
+    /// horizontal on what's left, then vertical again, ...), matching i3/dwm's
+    /// default spiral tiling. Always splits `active_pane_id`, which
+    /// `split_active` sets to the newly created pane — so as long as the
+    /// caller doesn't refocus a different pane between calls, each successive
+    /// spawn subdivides the "remaining" region, giving the classic spiral.
+    ///
+    /// Used by agentic orchestration: an orchestrator/lead/worker fan-out can
+    /// call this repeatedly with zero layout bookkeeping of its own.
+    /// Whether the *next* `spiral_split` call will use a horizontal
+    /// orientation (vertical divider). Lets callers pre-check the resulting
+    /// pane size against a minimum before committing to the split.
+    pub fn spiral_split_count_even(&self) -> bool {
+        self.spiral_split_count.is_multiple_of(2)
+    }
+
+    pub fn spiral_split(&mut self) -> Option<u64> {
+        let orientation = if self.spiral_split_count_even() {
+            gtk4::Orientation::Horizontal // vertical divider -> left/right halves
+        } else {
+            gtk4::Orientation::Vertical // horizontal divider -> top/bottom halves
+        };
+        let result = self.split_active(orientation);
+        if result.is_some() {
+            self.spiral_split_count += 1;
+        }
+        result
     }
 
     pub fn split_active(&mut self, orientation: gtk4::Orientation) -> Option<u64> {

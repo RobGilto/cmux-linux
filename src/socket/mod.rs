@@ -426,6 +426,15 @@ async fn dispatch_line(
                 .map(String::from),
             resp_tx,
         },
+        "surface.spawn" => commands::SocketCommand::SurfaceSpawn {
+            req_id: req_id.clone(),
+            id: params.get("id").and_then(|v| v.as_str()).map(String::from),
+            agent: params
+                .get("agent")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            resp_tx,
+        },
         "surface.focus" => commands::SocketCommand::SurfaceFocus {
             req_id: req_id.clone(),
             id: params
@@ -437,11 +446,7 @@ async fn dispatch_line(
         },
         "surface.close" => commands::SocketCommand::SurfaceClose {
             req_id: req_id.clone(),
-            id: params
-                .get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
+            id: params.get("id").and_then(|v| v.as_str()).map(String::from),
             resp_tx,
         },
         "surface.send_text" => commands::SocketCommand::SurfaceSendText {

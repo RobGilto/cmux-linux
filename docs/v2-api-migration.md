@@ -77,6 +77,7 @@ Surfaces / Splits:
 - [x] list_surfaces -> `surface.list`
 - [x] focus_surface / focus_surface_by_panel -> `surface.focus`
 - [x] new_split -> `surface.split`
+- [x] `surface.spawn` (new, Linux-only) — fibonacci/spiral auto-split, no direction arg; alternates orientation via a per-workspace counter (`SplitEngine::spiral_split`)
 - [x] new_surface -> `surface.create`
 - [x] close_surface -> `surface.close`
 - [x] drag_surface_to_split -> `surface.drag_to_split`

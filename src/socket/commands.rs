@@ -91,6 +91,16 @@ pub enum SocketCommand {
         agent: Option<String>,
         resp_tx: RespTx,
     },
+    /// Fibonacci/spiral auto-split: no orientation argument — the workspace's
+    /// SplitEngine alternates orientation on each call. Built for agentic
+    /// orchestrator/lead/worker fan-out where the caller shouldn't have to
+    /// track layout state.
+    SurfaceSpawn {
+        req_id: Value,
+        id: Option<String>,
+        agent: Option<String>,
+        resp_tx: RespTx,
+    },
     SurfaceFocus {
         req_id: Value,
         id: String,
@@ -98,7 +108,8 @@ pub enum SocketCommand {
     },
     SurfaceClose {
         req_id: Value,
-        id: String,
+        /// None closes the active pane in the active workspace.
+        id: Option<String>,
         resp_tx: RespTx,
     },
     SurfaceSendText {
