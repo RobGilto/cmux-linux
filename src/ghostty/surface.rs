@@ -696,6 +696,13 @@ pub fn create_surface(
                     ffi::ghostty_surface_refresh(surface);
                 }
                 gl_area_for_focus.queue_render();
+                // Keep SURFACE_PTR in sync with real GTK focus. read_clipboard_cb /
+                // confirm_read_clipboard_cb get no surface argument from ghostty and
+                // resolve the target via this global — without updating it here,
+                // paste-from-outside-cmux only ever works for whichever pane was
+                // created *last*, and fails silently (or targets the wrong pane)
+                // as soon as focus moves to any other pane.
+                callbacks::SURFACE_PTR.store(surface as usize, Ordering::SeqCst);
             }
         }
     });
