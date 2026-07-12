@@ -14,6 +14,29 @@ pub use socket_client::CliError;
 use clap::{Parser, Subcommand};
 use std::time::Duration;
 
+/// This process's own controlling terminal, as a pts number, on Linux
+/// (`/proc/self/stat`'s tty_nr field decoded the same way cmux-app decodes
+/// every pane shell's pts for `cmux top`). None if not running under a real
+/// tty (e.g. piped/non-interactive), in which case there's no self-close
+/// risk to guard against.
+///
+/// Sent along with `surface.close` so the server can detect "this command
+/// is running inside the very pane it's being asked to close" — that
+/// pane's shell (and this CLI process, as its child) would be torn down
+/// mid-call, before a response could ever reach you, which looks like a
+/// hang rather than the close it actually was.
+fn caller_pts() -> Option<i32> {
+    let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
+    let rest = stat.rsplit_once(')')?.1;
+    let tty_nr: i32 = rest.split_whitespace().nth(4)?.parse().ok()?;
+    let major = (tty_nr >> 8) & 0xfff;
+    if (136..=143).contains(&major) {
+        Some((tty_nr & 0xff) | (((tty_nr >> 20) & 0xfff) << 8))
+    } else {
+        None
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "cmux", about = "Control cmux terminal multiplexer")]
 pub struct Cli {
@@ -203,6 +226,12 @@ pub enum Commands {
     CloseSurface {
         /// Surface UUID (default: active pane in the active workspace)
         id: Option<String>,
+        /// Close even if this command is running inside the pane being
+        /// closed (its shell, and this command, get killed mid-call — you
+        /// won't see a response, and the pane just appears to hang for a
+        /// beat before vanishing). Without this flag, that case is refused.
+        #[arg(long)]
+        force: bool,
     },
     /// Send text to a surface
     SendText {
@@ -1129,10 +1158,15 @@ fn command_to_rpc(cmd: &Commands) -> (&'static str, serde_json::Value) {
             ("surface.spawn", Value::Object(p))
         }
         Commands::FocusSurface { id } => ("surface.focus", json!({"id": id})),
-        Commands::CloseSurface { id } => {
+        Commands::CloseSurface { id, force } => {
             let mut p = serde_json::Map::new();
             if let Some(ref id) = id {
                 p.insert("id".into(), json!(id));
+            }
+            if *force {
+                p.insert("force".into(), json!(true));
+            } else if let Some(pts) = caller_pts() {
+                p.insert("caller_pts".into(), json!(pts));
             }
             ("surface.close", Value::Object(p))
         }

@@ -43,6 +43,19 @@ Living document — updated as edges are found or closed. Last review: 2026-07-1
   with `try_borrow_mut` since this signal can fire reentrantly from inside
   split/close's own `grab_focus()` call while a socket handler still holds
   `AppState`'s borrow.
+- ~~`cmux close` typed into the pane it's closing looked like a hang~~ — with
+  `active_pane_id` now tracking real focus (previous item), self-closing
+  actually worked, but the pane's shell — and the `cmux close` process
+  running inside it — gets torn down mid-call, before a response can ever
+  reach you. No error, no output, just the pane appearing to freeze for a
+  beat before vanishing. Fixed with a guard: the CLI reports its own
+  controlling-terminal pts (`caller_pts` in `surface.close`'s params,
+  `src/cli/mod.rs`), the server matches it against the target pane's pts via
+  the same env/order heuristic `cmux top` uses
+  (`procstat::match_pane_pts`), and refuses with `self_close_blocked`
+  instead of proceeding blind. `--force` bypasses it (you still won't see a
+  response, same as before — this only adds a warning, not a new way to
+  avoid the underlying process-hierarchy limitation).
 
 ## Open
 

@@ -110,6 +110,12 @@ pub enum SocketCommand {
         req_id: Value,
         /// None closes the active pane in the active workspace.
         id: Option<String>,
+        /// The calling CLI process's own controlling-terminal pts number,
+        /// if it has one. Used to detect and refuse closing the very pane
+        /// this command is running inside (see `force`).
+        caller_pts: Option<i32>,
+        /// Bypass the self-close guard.
+        force: bool,
         resp_tx: RespTx,
     },
     SurfaceSendText {

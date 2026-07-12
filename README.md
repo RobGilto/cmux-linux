@@ -172,6 +172,12 @@ pane — if that was the spiral tail, the next `spawn` falls back to
 whichever pane is currently active. Pass a uuid (`close-surface <uuid>`) to
 close a specific pane instead.
 
+`cmux close` refuses to close the pane it's running in — that pane's shell
+(and the `cmux close` process as its child) would be killed mid-call,
+before you'd ever see a response, which just looks like a hang. Target a
+different pane by uuid instead (the normal pattern: an orchestrator/lead
+pane closes worker panes, never itself), or pass `--force` to do it anyway.
+
 ### Socket Path
 
 The cmux socket is at `$XDG_RUNTIME_DIR/cmux/cmux.sock` (typically `/run/user/$UID/cmux/cmux.sock`).

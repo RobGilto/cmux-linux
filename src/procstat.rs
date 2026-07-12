@@ -147,6 +147,45 @@ pub fn child_process_stats() -> Vec<ProcEntry> {
     entries
 }
 
+/// Match each pane uuid to its shell's pts number, using the same env/order
+/// heuristic as `cmux top` (see this module's doc comment) — exact via
+/// CMUX_PANE for agent panes, creation order for plain shells. Returns only
+/// panes that resolved to a live process with a real controlling tty.
+///
+/// Used by `surface.close` to detect "you're asking to close the pane
+/// running this very command" (its shell — and the `cmux close` process
+/// itself — dies mid-call, before a response can be sent) and warn instead
+/// of silently doing it.
+pub fn match_pane_pts(panes: &[(String, String)]) -> std::collections::HashMap<String, i32> {
+    let procs = child_process_stats();
+    let mut used = vec![false; procs.len()];
+    let mut result = std::collections::HashMap::new();
+    let mut unmatched: Vec<&str> = Vec::new();
+    for (uuid, _ws) in panes {
+        match procs
+            .iter()
+            .position(|p| p.cmux_pane.as_deref() == Some(uuid.as_str()))
+        {
+            Some(i) => {
+                used[i] = true;
+                if procs[i].pts >= 0 {
+                    result.insert(uuid.clone(), procs[i].pts);
+                }
+            }
+            None => unmatched.push(uuid.as_str()),
+        }
+    }
+    let free: Vec<usize> = (0..procs.len())
+        .filter(|&i| !used[i] && procs[i].pts >= 0)
+        .collect();
+    for (n, &uuid) in unmatched.iter().enumerate() {
+        if let Some(&i) = free.get(n) {
+            result.insert(uuid.to_string(), procs[i].pts);
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

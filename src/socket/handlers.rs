@@ -1130,19 +1130,60 @@ pub fn handle_socket_command(cmd: SocketCommand, state: &crate::app_state::AppSt
         SocketCommand::SurfaceClose {
             req_id,
             id,
+            caller_pts,
+            force,
             resp_tx,
         } => {
             // Close pane by uuid, or the active pane in the active workspace
             // when no id is given. Set the target as active, then close_active().
-            let pane_id = {
+            let (pane_id, target_uuid, all_panes) = {
                 let s = state.borrow();
-                s.split_engines.get(s.active_index).and_then(|engine| {
+                let pane_id = s.split_engines.get(s.active_index).and_then(|engine| {
                     match id {
                         Some(ref uuid_str) => engine.find_pane_id_by_uuid(uuid_str),
                         None => Some(engine.active_pane_id),
                     }
-                })
+                });
+                let target_uuid = pane_id.and_then(|pid| {
+                    s.split_engines
+                        .get(s.active_index)
+                        .and_then(|engine| engine.root.find_uuid_for_pane(pid))
+                });
+                let all_panes: Vec<(String, String)> = s
+                    .workspaces
+                    .iter()
+                    .zip(s.split_engines.iter())
+                    .flat_map(|(ws, engine)| {
+                        let ws_name = ws.name.clone();
+                        engine
+                            .all_panes()
+                            .into_iter()
+                            .map(move |(uuid, _, _)| (uuid.to_string(), ws_name.clone()))
+                    })
+                    .collect();
+                (pane_id, target_uuid, all_panes)
             };
+            // Self-close guard: if this command is running inside the very
+            // pane it's asking to close, that pane's shell — and this
+            // command, as its child — gets torn down mid-call, before a
+            // response can ever be sent. Looks like a hang, not a close.
+            // Refuse unless --force. Only checked when the caller reported
+            // a controlling-terminal pts (non-interactive/piped callers,
+            // and orchestrators targeting another pane, have nothing to
+            // guard against here).
+            if !force {
+                if let (Some(caller_pts), Some(ref target_uuid)) = (caller_pts, &target_uuid) {
+                    let pts_map = crate::procstat::match_pane_pts(&all_panes);
+                    if pts_map.get(target_uuid) == Some(&caller_pts) {
+                        let _ = resp_tx.send(err(
+                            req_id,
+                            "self_close_blocked",
+                            "this would close the pane running this command — its shell (and this command) would be killed before you'd see a response. Pass --force to close it anyway, or target a different pane.",
+                        ));
+                        return;
+                    }
+                }
+            }
             match pane_id {
                 Some(pid) => {
                     let result = {

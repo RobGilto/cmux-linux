@@ -447,6 +447,14 @@ async fn dispatch_line(
         "surface.close" => commands::SocketCommand::SurfaceClose {
             req_id: req_id.clone(),
             id: params.get("id").and_then(|v| v.as_str()).map(String::from),
+            caller_pts: params
+                .get("caller_pts")
+                .and_then(|v| v.as_i64())
+                .map(|v| v as i32),
+            force: params
+                .get("force")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
             resp_tx,
         },
         "surface.send_text" => commands::SocketCommand::SurfaceSendText {
