@@ -1014,13 +1014,10 @@ pub fn handle_socket_command(cmd: SocketCommand, state: &crate::app_state::AppSt
                             }
                         }
                     }
-                    // Peek the orientation spiral_split will use, to apply the
-                    // same too-small guard as surface.split.
-                    let next_orientation = if engine.spiral_split_count_even() {
-                        gtk4::Orientation::Horizontal
-                    } else {
-                        gtk4::Orientation::Vertical
-                    };
+                    // Peek the orientation spiral_split will use (decided from
+                    // the target pane's own aspect ratio), to apply the same
+                    // too-small guard as surface.split.
+                    let next_orientation = engine.spiral_orientation_for(engine.active_pane_id);
                     if let Some((w, h)) = engine.pane_size(engine.active_pane_id) {
                         let resulting = if next_orientation == gtk4::Orientation::Horizontal {
                             w / 2

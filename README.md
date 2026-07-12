@@ -144,12 +144,17 @@ cmux raw <method> --params '{}' # send arbitrary JSON-RPC
 
 ### Fibonacci/spiral panel layout
 
-`cmux spawn` adds a pane with no orientation argument. Each workspace tracks
-a split counter and alternates orientation automatically — vertical divider
-(left/right) on the first call, horizontal (top/bottom) on the next, back to
-vertical, and so on — subdividing whatever space is left, same as i3/dwm's
-default spiral tiling. Useful for orchestrator/lead/worker agent fan-out,
-where each caller just asks for a new pane without tracking layout state:
+`cmux spawn` adds a pane with no orientation argument. Orientation is
+decided from the *target pane's own* on-screen aspect ratio — it always
+splits along the pane's longer axis (wide pane -> vertical divider,
+left/right; tall pane -> horizontal divider, top/bottom). Splitting the
+same pane always produces the same result, regardless of what else has
+been spawned elsewhere in the workspace — it's not a shared counter that
+drifts based on unrelated calls. As each new pane naturally ends up
+narrower/shorter than its parent, repeated spawning still produces the
+classic i3/dwm-style spiral. Useful for orchestrator/lead/worker agent
+fan-out, where each caller just asks for a new pane without tracking
+layout state:
 
 ```bash
 cmux spawn --agent claude   # pane 2
@@ -158,10 +163,9 @@ cmux spawn --agent codex    # pane 4
 ```
 
 `--id <uuid>` targets a specific pane instead of the active one; the
-orientation is still decided by the counter. `cmux close` (alias for
-`close-surface` with no id) removes the active pane; it does not rewind
-the counter. Pass a uuid (`close-surface <uuid>`) to close a specific pane
-instead.
+orientation is still decided by that pane's aspect ratio. `cmux close`
+(alias for `close-surface` with no id) removes the active pane. Pass a
+uuid (`close-surface <uuid>`) to close a specific pane instead.
 
 ### Socket Path
 

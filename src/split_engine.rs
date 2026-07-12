@@ -326,10 +326,6 @@ pub struct SplitEngine {
     app: gtk4::Application,
     /// Ghostty app handle needed to create new surfaces.
     ghostty_app: ffi::ghostty_app_t,
-    /// Number of `spiral_split` calls made so far in this workspace — drives
-    /// orientation alternation for fibonacci/spiral pane layout (agentic
-    /// orchestrator → lead → worker fan-out).
-    spiral_split_count: u32,
 }
 
 impl SplitEngine {
@@ -362,7 +358,6 @@ impl SplitEngine {
             next_pane_id: pane_id + 1,
             app,
             ghostty_app,
-            spiral_split_count: 0,
         }
     }
 
@@ -423,7 +418,6 @@ impl SplitEngine {
             next_pane_id,
             app,
             ghostty_app,
-            spiral_split_count: 0,
         })
     }
 
@@ -640,34 +634,36 @@ impl SplitEngine {
         self.split_active(gtk4::Orientation::Vertical)
     }
 
-    /// Fibonacci/spiral auto-split: no orientation argument. Alternates
-    /// orientation on each call (vertical divider first — left/right — then
-    /// horizontal on what's left, then vertical again, ...), matching i3/dwm's
-    /// default spiral tiling. Always splits `active_pane_id`, which
-    /// `split_active` sets to the newly created pane — so as long as the
-    /// caller doesn't refocus a different pane between calls, each successive
-    /// spawn subdivides the "remaining" region, giving the classic spiral.
+    /// Fibonacci/spiral auto-split: no orientation argument. Orientation is
+    /// decided from the *target pane's own* on-screen aspect ratio — split
+    /// along its longer axis (wide pane -> vertical divider producing
+    /// left/right halves; tall pane -> horizontal divider producing
+    /// top/bottom halves). This is what makes repeated spawning look like a
+    /// spiral: each new pane is narrower/shorter than its parent, so it
+    /// naturally alternates axes as the tree grows.
+    ///
+    /// Deliberately *not* a global per-workspace counter: an earlier version
+    /// alternated orientation by a shared call count, which meant refocusing
+    /// an already-split pane and spawning again picked up wherever the
+    /// counter had drifted to from splits made elsewhere — inconsistent from
+    /// the caller's point of view. Deciding from the pane's own geometry
+    /// means splitting the same pane always behaves the same way, regardless
+    /// of what else happened in the workspace.
     ///
     /// Used by agentic orchestration: an orchestrator/lead/worker fan-out can
     /// call this repeatedly with zero layout bookkeeping of its own.
-    /// Whether the *next* `spiral_split` call will use a horizontal
-    /// orientation (vertical divider). Lets callers pre-check the resulting
-    /// pane size against a minimum before committing to the split.
-    pub fn spiral_split_count_even(&self) -> bool {
-        self.spiral_split_count.is_multiple_of(2)
+    pub fn spiral_orientation_for(&self, pane_id: u64) -> gtk4::Orientation {
+        match self.pane_size(pane_id) {
+            // Wider than tall (or square) -> vertical divider (left/right).
+            // Taller than wide -> horizontal divider (top/bottom).
+            Some((w, h)) if h > w => gtk4::Orientation::Vertical,
+            _ => gtk4::Orientation::Horizontal,
+        }
     }
 
     pub fn spiral_split(&mut self) -> Option<u64> {
-        let orientation = if self.spiral_split_count_even() {
-            gtk4::Orientation::Horizontal // vertical divider -> left/right halves
-        } else {
-            gtk4::Orientation::Vertical // horizontal divider -> top/bottom halves
-        };
-        let result = self.split_active(orientation);
-        if result.is_some() {
-            self.spiral_split_count += 1;
-        }
-        result
+        let orientation = self.spiral_orientation_for(self.active_pane_id);
+        self.split_active(orientation)
     }
 
     pub fn split_active(&mut self, orientation: gtk4::Orientation) -> Option<u64> {
