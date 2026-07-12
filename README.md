@@ -144,28 +144,33 @@ cmux raw <method> --params '{}' # send arbitrary JSON-RPC
 
 ### Fibonacci/spiral panel layout
 
-`cmux spawn` adds a pane with no orientation argument. Orientation is
-decided from the *target pane's own* on-screen aspect ratio — it always
-splits along the pane's longer axis (wide pane -> vertical divider,
-left/right; tall pane -> horizontal divider, top/bottom). Splitting the
-same pane always produces the same result, regardless of what else has
-been spawned elsewhere in the workspace — it's not a shared counter that
-drifts based on unrelated calls. As each new pane naturally ends up
-narrower/shorter than its parent, repeated spawning still produces the
-classic i3/dwm-style spiral. Useful for orchestrator/lead/worker agent
-fan-out, where each caller just asks for a new pane without tracking
-layout state:
+`cmux spawn` adds a pane with no orientation argument, and — with no `--id`
+— always continues the spiral from the **spiral tail**: the pane most
+recently created by a `spawn` call, tracked independently of GTK keyboard
+focus. Navigating around to inspect other panes (Ctrl+Shift+arrows,
+`focus-surface`) does not redirect where the next spawn lands; only
+spawning (or an explicit `--id`) moves the tail. Orientation is decided
+from the target pane's own on-screen aspect ratio — split along its longer
+axis (wide -> vertical divider, left/right; tall -> horizontal divider,
+top/bottom) — so splitting the same pane in the same state always produces
+the same result. As each new pane naturally ends up narrower/shorter than
+its parent, repeated spawning produces the classic i3/dwm-style spiral.
+Useful for orchestrator/lead/worker agent fan-out, where each caller just
+asks for a new pane without tracking or fighting over layout state:
 
 ```bash
 cmux spawn --agent claude   # pane 2
-cmux spawn --agent claude   # pane 3
-cmux spawn --agent codex    # pane 4
+cmux spawn --agent claude   # pane 3: continues from pane 2, even if you
+                             # navigated elsewhere in between
+cmux spawn --agent codex    # pane 4: continues from pane 3
 ```
 
-`--id <uuid>` targets a specific pane instead of the active one; the
-orientation is still decided by that pane's aspect ratio. `cmux close`
-(alias for `close-surface` with no id) removes the active pane. Pass a
-uuid (`close-surface <uuid>`) to close a specific pane instead.
+`--id <uuid>` splits a specific pane directly instead of continuing the
+spiral, and becomes the new spiral tail for subsequent no-id spawns.
+`cmux close` (alias for `close-surface` with no id) removes the active
+pane — if that was the spiral tail, the next `spawn` falls back to
+whichever pane is currently active. Pass a uuid (`close-surface <uuid>`) to
+close a specific pane instead.
 
 ### Socket Path
 

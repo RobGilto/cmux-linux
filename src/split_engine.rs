@@ -326,6 +326,15 @@ pub struct SplitEngine {
     app: gtk4::Application,
     /// Ghostty app handle needed to create new surfaces.
     ghostty_app: ffi::ghostty_app_t,
+    /// Pane that the next `spiral_split` will subdivide. Deliberately
+    /// decoupled from `active_pane_id` / GTK keyboard focus: navigating to
+    /// inspect an older pane (e.g. Ctrl+Shift+arrows) must not redirect where
+    /// the spiral continues — otherwise `spawn` after manual navigation
+    /// splits whatever you last looked at instead of extending the sequence
+    /// from the most recently spawned pane, which is what an
+    /// orchestrator/lead/worker fan-out expects. `None` until the first
+    /// `spiral_split` call, at which point it defaults to `active_pane_id`.
+    spiral_tail_pane_id: Option<u64>,
 }
 
 impl SplitEngine {
@@ -358,6 +367,7 @@ impl SplitEngine {
             next_pane_id: pane_id + 1,
             app,
             ghostty_app,
+            spiral_tail_pane_id: None,
         }
     }
 
@@ -418,6 +428,7 @@ impl SplitEngine {
             next_pane_id,
             app,
             ghostty_app,
+            spiral_tail_pane_id: None,
         })
     }
 
@@ -661,9 +672,40 @@ impl SplitEngine {
         }
     }
 
-    pub fn spiral_split(&mut self) -> Option<u64> {
-        let orientation = self.spiral_orientation_for(self.active_pane_id);
-        self.split_active(orientation)
+    /// Pane `spiral_split(None)` will target next: the pane most recently
+    /// created by a spiral split, or `active_pane_id` if there hasn't been
+    /// one yet (or that pane was since closed). Exposed so callers (the
+    /// socket handler's too-small pre-check) can peek the same resolution
+    /// `spiral_split` will use.
+    pub fn spiral_target_pane_id(&self) -> u64 {
+        self.spiral_tail_pane_id
+            .filter(|&pid| self.root.find_uuid_for_pane(pid).is_some())
+            .unwrap_or(self.active_pane_id)
+    }
+
+    /// `target`: `Some(pane_id)` splits that specific pane (e.g. an explicit
+    /// `--id`); `None` continues the spiral from `spiral_target_pane_id()`.
+    ///
+    /// Splits the target directly rather than going through
+    /// `active_pane_id` / GTK keyboard focus — manually navigating to an
+    /// older pane to inspect it (Ctrl+Shift+arrows, `focus-surface`) must
+    /// not redirect where the next spiral split lands. Without this, calling
+    /// `spawn` after navigating away from the most-recently-spawned pane
+    /// would split whatever you last looked at instead of extending the
+    /// sequence, which breaks the orchestrator/lead/worker fan-out this is
+    /// built for. The newly created pane still receives keyboard focus (via
+    /// `split_active`), and becomes the new spiral tail.
+    pub fn spiral_split(&mut self, target: Option<u64>) -> Option<u64> {
+        let target = target.unwrap_or_else(|| self.spiral_target_pane_id());
+        let orientation = self.spiral_orientation_for(target);
+        let previous_active = self.active_pane_id;
+        self.active_pane_id = target;
+        let result = self.split_active(orientation);
+        match result {
+            Some(new_pane_id) => self.spiral_tail_pane_id = Some(new_pane_id),
+            None => self.active_pane_id = previous_active,
+        }
+        result
     }
 
     pub fn split_active(&mut self, orientation: gtk4::Orientation) -> Option<u64> {

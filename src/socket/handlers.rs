@@ -995,30 +995,36 @@ pub fn handle_socket_command(cmd: SocketCommand, state: &crate::app_state::AppSt
             agent,
             resp_tx,
         } => {
-            // Fibonacci/spiral auto-split: same target-resolution and
-            // min-size guard as surface.split, but orientation is decided by
-            // SplitEngine::spiral_split (alternates automatically) instead of
-            // a caller-supplied direction.
+            // Fibonacci/spiral auto-split: same min-size guard as
+            // surface.split, but the target pane and orientation are decided
+            // by SplitEngine::spiral_split — an explicit `id` splits that
+            // pane directly; otherwise it continues from the spiral tail
+            // (the pane most recently created by a spawn), NOT whatever pane
+            // currently has keyboard focus. Manually navigating to inspect
+            // an older pane must not redirect where the next spawn lands.
             const MIN_PANE_PX: i32 = 200;
 
             let result = {
                 let mut s = state.borrow_mut();
                 let idx = s.active_index;
                 if let Some(engine) = s.split_engines.get_mut(idx) {
-                    if let Some(ref uuid_str) = id {
-                        match engine.find_pane_id_by_uuid(uuid_str) {
-                            Some(pid) => engine.active_pane_id = pid,
+                    let explicit_target = match id {
+                        Some(ref uuid_str) => match engine.find_pane_id_by_uuid(uuid_str) {
+                            Some(pid) => Some(pid),
                             None => {
                                 let _ = resp_tx.send(err(req_id, "not_found", "surface not found"));
                                 return;
                             }
-                        }
-                    }
+                        },
+                        None => None,
+                    };
+                    let target =
+                        explicit_target.unwrap_or_else(|| engine.spiral_target_pane_id());
                     // Peek the orientation spiral_split will use (decided from
                     // the target pane's own aspect ratio), to apply the same
                     // too-small guard as surface.split.
-                    let next_orientation = engine.spiral_orientation_for(engine.active_pane_id);
-                    if let Some((w, h)) = engine.pane_size(engine.active_pane_id) {
+                    let next_orientation = engine.spiral_orientation_for(target);
+                    if let Some((w, h)) = engine.pane_size(target) {
                         let resulting = if next_orientation == gtk4::Orientation::Horizontal {
                             w / 2
                         } else {
@@ -1042,7 +1048,7 @@ pub fn handle_socket_command(cmd: SocketCommand, state: &crate::app_state::AppSt
                             return;
                         }
                     }
-                    engine.spiral_split().and_then(|new_pane_id| {
+                    engine.spiral_split(explicit_target).and_then(|new_pane_id| {
                         engine
                             .all_panes()
                             .into_iter()
