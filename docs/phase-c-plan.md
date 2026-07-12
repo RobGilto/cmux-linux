@@ -80,20 +80,35 @@ biggest chunk.
 
 ## Open work (the contents of myc epic #1)
 
-### 1. Restore the two surface lifecycle exports
+### 1. Restore the two surface lifecycle exports — DONE
 
-`src/ghostty/surface.rs` has two `TODO(cmux-linux)` stubs for
-`ghostty_surface_display_realized` / `..._unrealized`. Resolve by one of:
+Resolved via option (a): `ghostty/src/apprt/embedded.zig` now exports
+`ghostty_surface_display_realized` / `ghostty_surface_display_unrealized`,
+wrapping `Surface.displayRealized()` / `displayUnrealized()`, which call
+`core_surface.renderer.displayRealized()` / `displayUnrealized()` — the same
+calls the native GTK4 apprt already made in
+`src/apprt/gtk/class/surface.zig`. `renderer/OpenGL.zig`'s `displayRealized`
+had a `@compileError` restricting it to `apprt.gtk`; it now also allows
+`apprt.embedded`, matching the precedent already set by `surfaceInit`'s
+"cmux fork" `apprt.embedded` branch in the same file.
 
-- (a) Open a manaflow-ai/ghostty branch that re-exports
-  `renderer.displayRealized()` / `displayUnrealized()` through
-  `src/apprt/embedded.zig`, then bump the parent-repo submodule
-  pointer; **or**
-- (b) Replace the call sites with whatever lifecycle hook upstream
-  currently uses for GTK4 GLArea reparent.
+`build.rs`'s bindgen blocklist for these two functions is removed;
+`src/ghostty/surface.rs`'s realize/unrealize handlers now call
+`ghostty_surface_display_realized`/`_unrealized` to preserve a pane's live
+ghostty surface (and its pty/process) across an application-driven reparent
+(split/close), instead of freeing and recreating it. This was blocking real
+usage, not just cosmetic: any split or close that reparented an existing
+pane's widget silently killed whatever process (shell, or an agent TUI like
+claude/pi) was running in it. `PRESERVE_ON_UNREALIZE`
+(`src/ghostty/callbacks.rs`) tracks per-GLArea which panes' next unrealize
+should preserve vs. genuinely free, so real pane closes still terminate
+correctly.
 
-(a) is cheaper but requires push access to the manaflow-ai/ghostty
-fork. (b) is more durable.
+Requires rebuilding the ghostty submodule
+(`zig build -Dapp-runtime=none -Doptimize=ReleaseFast -Dcpu=baseline
+-Dgtk-x11=true -Dgtk-wayland=true` from `ghostty/`) whenever
+`embedded.zig`/`OpenGL.zig` change — `scripts/setup-linux.sh` already does
+this on a fresh checkout.
 
 ### 2. Finish Tier-2 browser RPC dispatch
 

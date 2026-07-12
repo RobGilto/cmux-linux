@@ -89,6 +89,24 @@ pub unsafe extern "C" fn wakeup_cb(_userdata: *mut std::ffi::c_void) {
 pub static GL_TO_SURFACE: LazyLock<Mutex<HashMap<usize, usize>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// GLArea raw pointers (as `area.as_ptr() as usize`) whose *next* unrealize
+/// should preserve the live ghostty surface, calling `display_unrealized` to
+/// release GL-context-bound state while keeping the surface object (and its
+/// pty and running process) alive for the matching `display_realized` on
+/// re-realize. Without this, the default behavior frees the surface
+/// outright, killing whatever process (shell, or an agent TUI like claude or
+/// pi) is running in that pane.
+///
+/// Set immediately before an application-driven reparent of a pane that must
+/// keep running (spiral/regular split's target pane, or a close's surviving
+/// sibling subtree), and consumed (removed) by the unrealize handler for
+/// that specific GLArea the moment it fires. Per-widget, not a single flag,
+/// because one split or close can trigger unrealize on more than one GLArea
+/// in the same call (e.g. closing a pane whose surviving sibling is itself a
+/// multi-pane subtree) and only some of them should survive it.
+pub static PRESERVE_ON_UNREALIZE: LazyLock<Mutex<std::collections::HashSet<usize>>> =
+    LazyLock::new(|| Mutex::new(std::collections::HashSet::new()));
+
 /// Called by Ghostty when a surface wants to close (e.g. shell exits).
 /// Runs on the GLib main thread (called during ghostty_app_tick).
 /// Per D-09: no GUI dialog — exit the process.

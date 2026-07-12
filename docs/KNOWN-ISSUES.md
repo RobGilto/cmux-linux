@@ -16,6 +16,19 @@ Living document — updated as edges are found or closed. Last review: 2026-07-1
 - ~~Workspace UUIDs change across restarts~~ — restore reuses persisted uuids.
 - ~~A GL failure in one pane killed the whole app (`exit(1)`)~~ — pane is
   disabled, `surface.error` emitted, app survives.
+- ~~Splitting or closing next to a pane with a live process (shell, or an
+  agent TUI like claude/pi) silently killed it~~ — the previous "re-realize
+  after reparent allocates a fresh ghostty surface" workaround wasn't cosmetic:
+  it was a real process kill (verified: env vars, cwd, and scrollback were all
+  wiped by any split/close that reparented an existing pane). Fixed by
+  re-exporting `ghostty_surface_display_realized`/`_unrealized` from the
+  vendored ghostty submodule (`ghostty/src/apprt/embedded.zig`, `myc task #1`,
+  see `docs/phase-c-plan.md` §1) and wiring cmux's GLArea realize/unrealize
+  handlers (`src/ghostty/surface.rs`) to preserve the live surface across a
+  reparent instead of freeing it. `PRESERVE_ON_UNREALIZE`
+  (`src/ghostty/callbacks.rs`) marks exactly which panes' unrealize should
+  preserve vs. genuinely free, so real pane closes still terminate their
+  process correctly.
 
 ## Open
 
@@ -23,10 +36,6 @@ Living document — updated as edges are found or closed. Last review: 2026-07-1
 - **llvmpipe (headless CI) is not the NVIDIA path.** The headless CI job
   proves the socket API, not rendering. Render correctness is verified on
   real hardware (`scripts/fleet-smoke.sh --screenshot`).
-- **Re-realize after reparent allocates a fresh ghostty surface** (the
-  `ghostty_surface_display_realized` export was dropped upstream); scrollback
-  in that pane survives, but renderer state is rebuilt. Cosmetic flicker at
-  worst; tracked for the next ghostty submodule bump.
 
 ### Orchestration
 - **`cmux top` surface↔process matching is exact only for agent panes**

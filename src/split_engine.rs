@@ -899,6 +899,15 @@ impl SplitEngine {
     ) -> Option<()> {
         let orientation_cap = orientation;
         let mut replacer = Some(|old_leaf: SplitNode| {
+            // old_leaf keeps running (it's the pane being split, not closed)
+            // — mark its GLArea so the unrealize the reparent below triggers
+            // preserves the live ghostty surface (and whatever process is
+            // running in it) instead of freeing it. Must happen before the
+            // unparent call, which fires unrealize synchronously.
+            if let SplitNode::Leaf { ref gl_area, .. } = old_leaf {
+                mark_preserve_on_unrealize(gl_area);
+            }
+
             let old_widget = old_leaf.widget();
             let new_widget = new_leaf.widget();
 
@@ -1284,6 +1293,12 @@ fn remove_leaf_from_tree(node: &mut SplitNode, target_id: u64) -> Option<u64> {
                 // Surviving sibling is end. Replace this Split with end in the GTK tree.
                 let surviving = *end.clone();
                 let surviving_widget = surviving.widget();
+                // The surviving sibling (possibly a whole subtree with
+                // several live panes) is about to be reparented up a level
+                // — mark every leaf in it to preserve its ghostty surface
+                // across the unrealize that reparent triggers, so closing
+                // one pane doesn't kill its still-open sibling(s)' processes.
+                mark_subtree_preserve_on_unrealize(&surviving);
                 // Find the paned's parent and replace it with the surviving widget.
                 if let Some(parent) = paned.parent() {
                     replace_child_in_parent(&parent, &paned.clone().upcast(), &surviving_widget);
@@ -1302,6 +1317,7 @@ fn remove_leaf_from_tree(node: &mut SplitNode, target_id: u64) -> Option<u64> {
             if end_is_target {
                 let surviving = *start.clone();
                 let surviving_widget = surviving.widget();
+                mark_subtree_preserve_on_unrealize(&surviving);
                 if let Some(parent) = paned.parent() {
                     replace_child_in_parent(&parent, &paned.clone().upcast(), &surviving_widget);
                 }
@@ -1463,6 +1479,31 @@ fn find_adjacent(root: &SplitNode, active_id: u64, direction: FocusDirection) ->
             } else {
                 None
             }
+        }
+    }
+}
+
+/// Mark a single GLArea's ghostty surface to survive its next unrealize
+/// (called right before an application-driven reparent unparents it) instead
+/// of being freed. See `PRESERVE_ON_UNREALIZE`'s doc comment.
+fn mark_preserve_on_unrealize(gl_area: &gtk4::GLArea) {
+    use gtk4::prelude::*;
+    if let Ok(mut set) = crate::ghostty::callbacks::PRESERVE_ON_UNREALIZE.lock() {
+        set.insert(gl_area.as_ptr() as usize);
+    }
+}
+
+/// Mark every terminal leaf in a subtree (recursing through nested Splits)
+/// to survive its next unrealize. Used when a whole surviving sibling
+/// subtree — not just a single pane — is about to be reparented up a level,
+/// e.g. closing one pane next to a multi-pane surviving group.
+fn mark_subtree_preserve_on_unrealize(node: &SplitNode) {
+    match node {
+        SplitNode::Leaf { gl_area, .. } => mark_preserve_on_unrealize(gl_area),
+        SplitNode::Preview { .. } => {} // No ghostty surface to preserve.
+        SplitNode::Split { start, end, .. } => {
+            mark_subtree_preserve_on_unrealize(start);
+            mark_subtree_preserve_on_unrealize(end);
         }
     }
 }

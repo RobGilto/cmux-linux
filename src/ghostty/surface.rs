@@ -135,7 +135,16 @@ pub fn create_surface(
             }
 
             // Check if surface already exists (re-realize after reparent).
-            // If so, just update the size/scale and refresh — don't create a new surface.
+            // If so, this is a *preserved* surface: the unrealize handler
+            // called `ghostty_surface_display_unrealized` and kept it in
+            // `cell` instead of freeing it (see PRESERVE_ON_UNREALIZE). Reuse
+            // it in place via `ghostty_surface_display_realized` — this keeps
+            // the pty and whatever process is running in it (a shell, or an
+            // agent TUI like claude/pi) alive across the reparent, instead of
+            // the old behavior of freeing and recreating the surface (which
+            // silently killed that process). See docs/phase-c-plan.md §1 —
+            // this closes myc task #1's ghostty_surface_display_realized /
+            // _unrealized gap now that embedded.zig re-exports them.
             //
             // DO NOT restore focus here. During a split, the old pane is reparented into
             // a GtkPaned — it should NOT regain focus. The new pane gets focus via its own
@@ -144,41 +153,42 @@ pub fn create_surface(
             // (via `enter` signal). Calling set_focus(true) here incorrectly marks the old
             // pane as focused, causing both panes to have focused=true simultaneously and
             // triggering Ghostty's early-return guard on the new pane's subsequent focus calls.
-            // On re-realize, the prior GL context was destroyed in unrealize
-            // and `cell` should be None (unrealize frees the surface). If a
-            // surface is still cached here, that means unrealize was bypassed
-            // (shouldn't happen with the current GTK lifecycle, but defend
-            // against it): free it before falling through to fresh creation.
-            //
-            // We previously kept the old surface and called
-            // `ghostty_surface_display_realized` to re-init GL state in place,
-            // but that export was dropped from manaflow-ai/ghostty when the
-            // pinned SHA (4845e82d) became unreachable. Reusing the cached
-            // surface against a brand-new GL context is undefined behavior
-            // (textures/FBOs/shaders refer to a context that no longer exists).
-            // Until embedded.zig re-exports displayRealized()/displayUnrealized()
-            // (Phase C), the correct fallback is to allocate a fresh surface.
-            // See myc task #1 (see docs/phase-c-plan.md §1).
-            if let Some(stale_surface) = cell.borrow_mut().take() {
+            if let Some(preserved_surface) = *cell.borrow() {
                 tracing::debug!(
-                    "cmux: GLArea {:p} re-realized with cached surface {:p} — freeing and re-creating (display_realized export missing)",
+                    "cmux: GLArea {:p} re-realized with preserved surface {:p} — restoring display state in place",
                     area.as_ptr(),
-                    stale_surface,
+                    preserved_surface,
                 );
-                if let Ok(mut registry) = callbacks::SURFACE_REGISTRY.lock() {
-                    registry.remove(&(stale_surface as usize));
+                unsafe {
+                    ffi::ghostty_surface_display_realized(preserved_surface);
                 }
-                // Drop the SSH io_write_userdata Arc, if any, BEFORE freeing
-                // the surface — once freed, ghostty's destructor may walk the
-                // userdata pointer for its own cleanup.
-                if let Some(ctx_raw) = userdata_cell.borrow_mut().take() {
-                    unsafe {
-                        std::sync::Arc::from_raw(ctx_raw);
+                // The GL context is new even though the surface object is
+                // the same — viewport/scale must be re-applied.
+                let scale = area.scale_factor() as f64;
+                let w = area.width();
+                let h = area.height();
+                unsafe {
+                    let phys_w = (w as f64 * scale) as u32;
+                    let phys_h = (h as f64 * scale) as u32;
+                    if phys_w > 0 && phys_h > 0 {
+                        ffi::ghostty_surface_set_size(preserved_surface, phys_w, phys_h);
+                    }
+                    ffi::ghostty_surface_set_content_scale(preserved_surface, scale, scale);
+                }
+                // Unrealize unconditionally removes these (see below) —
+                // re-add them regardless of whether this is a fresh or
+                // preserved surface.
+                if let Ok(mut areas) = callbacks::GL_AREA_REGISTRY.lock() {
+                    let raw_ptr = area.as_ptr();
+                    if !areas.iter().any(|p| p.0 == raw_ptr) {
+                        areas.push(callbacks::GtkGLAreaPtr(raw_ptr));
                     }
                 }
-                unsafe {
-                    ffi::ghostty_surface_free(stale_surface);
+                if let Ok(mut gl_to_surface) = callbacks::GL_TO_SURFACE.lock() {
+                    gl_to_surface.insert(area.as_ptr() as usize, preserved_surface as usize);
                 }
+                area.queue_render();
+                return;
             }
 
             tracing::debug!("cmux: GL context made current, no error");
@@ -344,25 +354,11 @@ pub fn create_surface(
         let cell_unrealize = surface_cell.clone();
         let userdata_unrealize = ssh_userdata_cell.clone();
         gl_area.connect_unrealize(move |area| {
-            tracing::debug!(
-                "cmux: GLArea {:p} pane={} UNREALIZE — freeing GL resources",
-                area.as_ptr(),
-                pane_id_unrealize,
-            );
-            // Make GL context current so Ghostty can properly free GL objects.
+            // Make GL context current so Ghostty can properly free/release GL objects.
             area.make_current();
-            // Take the surface out of the cell — it must not survive the GL
-            // context teardown. Until ghostty re-exports
-            // `ghostty_surface_display_unrealized` (Phase C, myc task #1 (see docs/phase-c-plan.md §1)),
-            // there is no in-place "release GL state but keep surface" path:
-            // the surface internally holds renderer state keyed to the GL
-            // context that is about to die. Free the whole surface; the next
-            // realize allocates a fresh one. This loses keep-alive state
-            // (scrollback retention across reparent) but avoids the UB of
-            // reusing GPU handles minted for a destroyed context.
             // Drop this GLArea from the wakeup registry FIRST — wakeup_cb runs
             // off the main thread and is the loudest stale-pointer consumer.
-            // The free-surface block below tears down ghostty state next.
+            // Re-added on realize regardless of the preserve/free branch below.
             let area_raw = area.as_ptr();
             if let Ok(mut areas) = callbacks::GL_AREA_REGISTRY.lock() {
                 areas.retain(|p| p.0 != area_raw);
@@ -371,6 +367,36 @@ pub fn create_surface(
                 gl_to_surface.remove(&(area.as_ptr() as usize));
             }
 
+            // If this GLArea was marked just before an application-driven
+            // reparent (split/close restructure), release GL state in place
+            // via display_unrealized but keep the surface — and its pty +
+            // running process (shell, or an agent TUI like claude/pi) —
+            // alive. The matching realize handler calls display_realized to
+            // resume in place. See PRESERVE_ON_UNREALIZE's doc comment.
+            let preserve = callbacks::PRESERVE_ON_UNREALIZE
+                .lock()
+                .map(|mut set| set.remove(&(area_raw as usize)))
+                .unwrap_or(false);
+            if preserve {
+                if let Some(surface) = *cell_unrealize.borrow() {
+                    tracing::debug!(
+                        "cmux: GLArea {:p} pane={} UNREALIZE — preserving surface {:p} across reparent",
+                        area.as_ptr(),
+                        pane_id_unrealize,
+                        surface,
+                    );
+                    unsafe {
+                        ffi::ghostty_surface_display_unrealized(surface);
+                    }
+                }
+                return;
+            }
+
+            tracing::debug!(
+                "cmux: GLArea {:p} pane={} UNREALIZE — freeing GL resources",
+                area.as_ptr(),
+                pane_id_unrealize,
+            );
             if let Some(surface) = cell_unrealize.borrow_mut().take() {
                 tracing::debug!("cmux: freeing ghostty surface {:p} on unrealize", surface,);
                 if let Ok(mut registry) = callbacks::SURFACE_REGISTRY.lock() {

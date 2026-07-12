@@ -136,14 +136,6 @@ fn main() {
         // Needed for types that reference C integer types
         .allowlist_item("ghostty_.*")
         .allowlist_item("GHOSTTY_.*")
-        // Block the two display lifecycle exports: they are declared in
-        // ghostty.h (held over from the fork's earlier pinned SHA) but no
-        // longer defined in ghostty-internal.a. Blocking them in bindgen
-        // prevents any future Rust caller from compile-succeeding into a
-        // link-time `undefined reference` error. Restore once Phase C
-        // re-exports them — see myc task #1 (see docs/phase-c-plan.md §1).
-        .blocklist_function("ghostty_surface_display_realized")
-        .blocklist_function("ghostty_surface_display_unrealized")
         .generate()
         .expect("Unable to generate ghostty bindings");
 
