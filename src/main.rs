@@ -390,6 +390,7 @@ fn build_ui(
         app.clone(),
     );
     state.borrow_mut().chromium_path_override = config.browser.chromium_path.clone();
+    crate::app_state::set_global_app_state(state.clone());
 
     // Wire sidebar click-to-switch.
     crate::sidebar::wire_sidebar_clicks(&sidebar_list, state.clone());

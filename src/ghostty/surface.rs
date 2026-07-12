@@ -710,6 +710,7 @@ pub fn create_surface(
     focus_controller.connect_enter({
         let cell = surface_cell.clone();
         let gl_area_for_focus = gl_area.clone();
+        let pane_id_for_focus = pane_id;
         move |_ctrl| {
             if let Some(surface) = *cell.borrow() {
                 unsafe {
@@ -729,6 +730,36 @@ pub fn create_surface(
                 // created *last*, and fails silently (or targets the wrong pane)
                 // as soon as focus moves to any other pane.
                 callbacks::SURFACE_PTR.store(surface as usize, Ordering::SeqCst);
+
+                // Keep SplitEngine::active_pane_id (and the CSS "active-pane"
+                // class) in sync with real GTK focus too. Without this, a
+                // plain click into a pane (or Tab, or grab_focus()) changes
+                // what receives keystrokes but never updates active_pane_id
+                // — which `cmux close`/`spawn` (no --id) act on — so those
+                // commands can silently target a stale, unrelated pane while
+                // the one you're actually looking at is left untouched.
+                // `try_borrow_mut`, not `borrow_mut`: this signal can fire
+                // *reentrantly* from inside an already-held AppState borrow —
+                // e.g. split_active()/close_active() call grab_focus() on the
+                // pane they just created/left focused while a socket handler
+                // still holds `state.borrow_mut()` for the whole split/close
+                // call. Those paths already set active_pane_id/CSS themselves
+                // before calling grab_focus(), so silently skipping here in
+                // that case is correct, not just panic-avoidance.
+                crate::app_state::with_app_state(|state| {
+                    let Ok(mut s) = state.try_borrow_mut() else {
+                        return;
+                    };
+                    for engine in s.split_engines.iter_mut() {
+                        if engine.root.find_uuid_for_pane(pane_id_for_focus).is_some() {
+                            if engine.active_pane_id != pane_id_for_focus {
+                                engine.active_pane_id = pane_id_for_focus;
+                                engine.root.update_focus_css(pane_id_for_focus);
+                            }
+                            break;
+                        }
+                    }
+                });
             }
         }
     });

@@ -7,6 +7,34 @@ use std::rc::Rc;
 
 pub type AppStateRef = Rc<RefCell<AppState>>;
 
+thread_local! {
+    /// Global handle to the running app's state, set once in main() right
+    /// after construction. Lets low-level GTK signal handlers that don't
+    /// otherwise carry an AppStateRef — notably a pane's
+    /// EventControllerFocus::enter in ghostty/surface.rs, which fires on
+    /// every real GTK focus grab (mouse click, Tab, grab_focus()) — find and
+    /// sync "the active pane" bookkeeping. Without this, clicking into a
+    /// pane changes what receives keystrokes but never updates
+    /// SplitEngine::active_pane_id, so `cmux close`/`spawn` (which act on
+    /// active_pane_id) can silently target a stale, unrelated pane instead
+    /// of whichever one you're actually looking at.
+    /// thread_local (not a static) because Rc<RefCell<_>> isn't Sync — fine
+    /// since GTK confines all of this to the main thread anyway.
+    static APP_STATE: RefCell<Option<AppStateRef>> = const { RefCell::new(None) };
+}
+
+/// Called once from main() after AppState is constructed.
+pub fn set_global_app_state(state: AppStateRef) {
+    APP_STATE.with(|s| *s.borrow_mut() = Some(state));
+}
+
+/// Run `f` with the global AppStateRef, if it's been set. Returns None
+/// before main() calls `set_global_app_state` (shouldn't happen in practice
+/// once GTK signal handlers can fire).
+pub fn with_app_state<R>(f: impl FnOnce(&AppStateRef) -> R) -> Option<R> {
+    APP_STATE.with(|s| s.borrow().as_ref().map(f))
+}
+
 pub struct AppState {
     pub split_engines: Vec<SplitEngine>,
     pub gtk_app: gtk4::Application,

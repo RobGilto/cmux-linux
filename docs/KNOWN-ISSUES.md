@@ -29,6 +29,20 @@ Living document — updated as edges are found or closed. Last review: 2026-07-1
   (`src/ghostty/callbacks.rs`) marks exactly which panes' unrealize should
   preserve vs. genuinely free, so real pane closes still terminate their
   process correctly.
+- ~~`cmux close`/`spawn` (no `--id`) could silently act on a stale, unrelated
+  pane~~ — `SplitEngine::active_pane_id` ("the active pane" these commands
+  target) was only ever updated by cmux's own actions (split, close,
+  Ctrl+Shift+arrow nav, `focus-surface`), never by real GTK focus changes
+  like a plain mouse click or Tab. Clicking into a pane changed what received
+  keystrokes but left `active_pane_id` pointing at whatever was true before —
+  so typing `cmux close` into the pane you'd just clicked into could close a
+  different pane instead, or spawn could split the wrong one. Fixed by
+  syncing `active_pane_id` (and the `active-pane` CSS class) inside the same
+  `EventControllerFocus::connect_enter` handler that already keeps Ghostty's
+  and the clipboard's focus state in sync (`src/ghostty/surface.rs`); guarded
+  with `try_borrow_mut` since this signal can fire reentrantly from inside
+  split/close's own `grab_focus()` call while a socket handler still holds
+  `AppState`'s borrow.
 
 ## Open
 
