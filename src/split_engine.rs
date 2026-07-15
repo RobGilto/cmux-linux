@@ -195,9 +195,9 @@ impl SplitNode {
     /// type, unlike `find_gl_area_in_tree` which only covers Leaf.
     pub fn find_widget_for_pane(&self, target_id: u64) -> Option<gtk4::Widget> {
         match self {
-            SplitNode::Leaf { pane_id, gl_area, .. } if *pane_id == target_id => {
-                Some(gl_area.clone().upcast())
-            }
+            SplitNode::Leaf {
+                pane_id, gl_area, ..
+            } if *pane_id == target_id => Some(gl_area.clone().upcast()),
             SplitNode::Leaf { .. } => None,
             SplitNode::Preview {
                 pane_id, container, ..
@@ -1886,50 +1886,20 @@ fn default_ratio() -> f64 {
     0.5
 }
 
-/// Best-effort CWD capture for a Ghostty surface via /proc.
-/// Walks /proc looking for child processes of the current process (cmux),
-/// then reads /proc/{pid}/cwd for the foreground shell.
-/// Never panics — falls back to $HOME or empty string.
+/// Best-effort CWD capture for a Ghostty surface.
+/// Finds the foreground child shell of the current process and reads its cwd
+/// (Linux: `/proc/{pid}/cwd`; macOS: libproc vnode path). Never panics —
+/// falls back to `$HOME` or empty string. See `platform::procinfo::surface_cwd`.
 fn get_surface_cwd(surface: ffi::ghostty_surface_t) -> String {
     if surface.is_null() {
         return String::new();
     }
-    // Try to find child shell processes by scanning /proc for children of our PID.
-    // Each Ghostty surface spawns a child shell — we look for processes whose
-    // parent is the cmux process and read their CWD.
+    // Each Ghostty surface spawns one direct child shell; procinfo finds it and
+    // returns its cwd, or None if it couldn't be read.
     let our_pid = std::process::id();
-    if let Ok(entries) = std::fs::read_dir("/proc") {
-        // Collect candidate child PIDs (children of our process)
-        let mut candidates: Vec<u32> = Vec::new();
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            if let Ok(pid) = name.to_string_lossy().parse::<u32>() {
-                // Read /proc/{pid}/stat to check parent PID
-                if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) {
-                    // Format: pid (comm) state ppid ...
-                    // Find the closing paren then parse ppid
-                    if let Some(after_comm) = stat.rfind(')') {
-                        let fields: Vec<&str> = stat[after_comm + 2..].split_whitespace().collect();
-                        if fields.len() >= 2 {
-                            if let Ok(ppid) = fields[1].parse::<u32>() {
-                                if ppid == our_pid {
-                                    candidates.push(pid);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        // Use the last (most recent) child process CWD as best guess.
-        // In practice, each surface has one direct child shell.
-        for pid in candidates.iter().rev() {
-            if let Ok(cwd) = std::fs::read_link(format!("/proc/{pid}/cwd")) {
-                let cwd_str = cwd.to_string_lossy().to_string();
-                if !cwd_str.is_empty() {
-                    return cwd_str;
-                }
-            }
+    if let Some(cwd) = crate::platform::procinfo::surface_cwd(our_pid) {
+        if !cwd.is_empty() {
+            return cwd;
         }
     }
     // Fallback to $HOME

@@ -10,6 +10,22 @@
 #[path = "../cli/mod.rs"]
 mod cli;
 
+// This binary has no lib.rs to share modules with cmux-app, so it re-includes
+// the leaf platform modules the CLI needs by path. `platform::dirs` is a pure
+// std+libc leaf (no GTK/config deps), so including it here is cheap and keeps
+// the CLI's socket discovery resolving the exact same runtime dir the server
+// (cmux-app) writes to. The leaf is declared at top level (whose path base,
+// src/bin/, is a real dir) then re-exported under `platform` so call sites can
+// say `crate::platform::dirs`, matching cmux-app's module layout.
+#[path = "../platform/dirs.rs"]
+pub mod platform_dirs;
+#[path = "../platform/procinfo.rs"]
+pub mod platform_procinfo;
+mod platform {
+    pub(crate) use super::platform_dirs as dirs;
+    pub(crate) use super::platform_procinfo as procinfo;
+}
+
 use clap::Parser;
 
 fn main() -> std::process::ExitCode {

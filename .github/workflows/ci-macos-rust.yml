@@ -1,0 +1,98 @@
+# macOS CI for the Rust + GTK4 cmux port (the macOS extensibility work).
+#
+# This is distinct from ci-macos-compat.yml, which builds the LEGACY macOS
+# Swift app (GhosttyTabs.xcodeproj). This workflow builds the same Rust
+# workspace ci-linux.yml builds, but on a macOS runner against Homebrew GTK4 —
+# the second platform for the Rust binaries.
+#
+# PORT STATUS: authored on Linux as scaffolding and NOT yet run on a macOS
+# runner. Runner labels, the Homebrew dep set, and the ghostty zig build flags
+# for macOS must be validated on hardware. See
+# specs/cmux-macos-extensibility.html Phase 5.
+
+name: CI macOS (Rust)
+
+on:
+  push:
+    branches: ["main", "master", "roadmap/**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-macos-rust-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust-macos:
+    name: fmt + clippy + test + build (macOS)
+    # GitHub-hosted Apple Silicon runner; swap for a WarpBuild label to match
+    # the rest of the macOS CI fleet if desired.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Checkout required submodules
+        run: git submodule update --init --force ghostty agent-browser
+
+      - name: Install system deps (Homebrew)
+        run: brew install gtk4 pkg-config zig oniguruma llvm
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Cache libghostty (keyed on submodule SHA)
+        id: ghostty-cache
+        uses: actions/cache@v4
+        with:
+          path: ghostty/zig-out
+          key: ghostty-${{ runner.os }}-${{ hashFiles('.git/modules/ghostty/HEAD') }}
+
+      - name: Build libghostty (macOS target)
+        if: steps.ghostty-cache.outputs.cache-hit != 'true'
+        run: |
+          # See scripts/setup-macos.sh — the gtk-x11/gtk-wayland flags are
+          # Linux-only and dropped here.
+          cd ghostty
+          zig build \
+            -Dapp-runtime=none \
+            -Doptimize=ReleaseFast \
+            -Dcpu=baseline
+
+      - name: rustfmt
+        run: cargo fmt --check
+
+      - name: clippy (strict — same gate as Linux)
+        run: >
+          cargo clippy --all-targets --
+          -D warnings -D clippy::unwrap_used -D clippy::expect_used
+
+      - name: Unit tests
+        run: cargo test --bins
+
+      - name: Release build
+        run: cargo build --release --bin cmux-app --bin cmux
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: cmux-macos-binaries
+          path: |
+            target/release/cmux-app
+            target/release/cmux
+          retention-days: 7

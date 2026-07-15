@@ -645,32 +645,15 @@ impl AppState {
 }
 
 /// Send a desktop notification for a bell in the given workspace.
-/// Uses `notify-send` subprocess to send notifications via org.freedesktop.Notifications.
 ///
-/// We use a subprocess instead of notify-rust (zbus D-Bus client) because GNOME Shell
-/// destroys notifications when the D-Bus sender name vanishes. With notify-rust in a
-/// spawned thread, the zbus connection drops when the thread exits, causing GNOME Shell's
-/// FdoNotificationDaemonSource._onNameVanished() to destroy the notification immediately.
-/// `notify-send` avoids this because it's a separate process whose D-Bus lifetime is
-/// independent of cmux.
+/// Dispatch goes through `platform::notify::bell`, which shells out to a
+/// per-platform notifier (`notify-send` on Linux, `osascript` on macOS) in a
+/// detached subprocess. A subprocess (rather than an in-process D-Bus client)
+/// is deliberate on Linux: GNOME Shell destroys notifications when the D-Bus
+/// sender name vanishes, so notify-rust in a spawned thread gets its
+/// notification torn down the moment the thread exits. A separate process has
+/// a D-Bus lifetime independent of cmux. See `platform::notify`.
 fn send_bell_notification(_app: &gtk4::Application, workspace_name: &str, _workspace_index: usize) {
     let body = format!("{} - Terminal bell", workspace_name);
-    std::thread::spawn(move || {
-        let result = std::process::Command::new("notify-send")
-            .arg("--app-name=cmux")
-            .arg("--icon=utilities-terminal")
-            .arg("--expire-time=5000")
-            .arg("Terminal Bell")
-            .arg(&body)
-            .status();
-        match result {
-            Ok(status) if !status.success() => {
-                tracing::debug!("cmux: notify-send exited with {status}");
-            }
-            Err(e) => {
-                tracing::warn!("cmux: failed to run notify-send: {e}");
-            }
-            _ => {}
-        }
-    });
+    crate::platform::notify::bell("Terminal Bell", &body);
 }

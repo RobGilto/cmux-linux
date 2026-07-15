@@ -28,16 +28,25 @@ pub fn discover_socket() -> Option<String> {
         }
     }
 
-    // 2. $XDG_RUNTIME_DIR/cmux/cmux.sock (fallback /run/user/{uid}/cmux/cmux.sock)
-    let xdg_base = std::env::var("XDG_RUNTIME_DIR")
-        .unwrap_or_else(|_| format!("/run/user/{}", unsafe { libc::getuid() }));
-    let xdg_socket = format!("{}/cmux/cmux.sock", xdg_base);
+    // 2. <runtime_dir>/cmux/cmux.sock — must match the server's socket_path().
+    // Linux: $XDG_RUNTIME_DIR (fallback /run/user/{uid}); macOS: $TMPDIR.
+    // See platform::dirs::runtime_dir.
+    let runtime_base = crate::platform::dirs::runtime_dir();
+    let xdg_socket = runtime_base
+        .join("cmux")
+        .join("cmux.sock")
+        .to_string_lossy()
+        .to_string();
     if Path::new(&xdg_socket).exists() {
         return Some(xdg_socket);
     }
 
-    // 3. $XDG_RUNTIME_DIR/cmux/last-socket-path marker file
-    let marker = format!("{}/cmux/last-socket-path", xdg_base);
+    // 3. <runtime_dir>/cmux/last-socket-path marker file
+    let marker = runtime_base
+        .join("cmux")
+        .join("last-socket-path")
+        .to_string_lossy()
+        .to_string();
     if let Ok(contents) = std::fs::read_to_string(&marker) {
         let path = contents.trim().to_string();
         if !path.is_empty() && Path::new(&path).exists() {

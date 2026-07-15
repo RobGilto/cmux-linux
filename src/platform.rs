@@ -9,6 +9,10 @@
 //! environment and MUST run as the first thing in main(), before GTK/GDK
 //! initialization and before any threads spawn.
 
+pub mod dirs;
+pub mod notify;
+pub mod procinfo;
+
 use std::sync::OnceLock;
 
 /// What launch-time configuration was auto-applied, for `system.identify`,
@@ -23,9 +27,25 @@ pub const DEFAULT_STRIP_PATTERNS: &[&str] = &["CLAUDECODE", "CLAUDE_CODE_*", "CL
 
 /// True when the NVIDIA proprietary driver is loaded. File checks instead of
 /// exec'ing nvidia-smi: no PATH dependency, no subprocess before GTK init.
+///
+/// The whole NVIDIA GL workaround is a Linux/Mesa/EGL-vs-desktop-GL concern:
+/// macOS has no EGL, no NVIDIA proprietary driver, and no X11/Wayland session
+/// distinction, so this probe is compiled to a constant `false` there and
+/// `apply_launch_env` becomes a documented no-op (nothing to apply). If the
+/// GtkGLArea Quartz backend ever needs its own launch-time hint, add a
+/// separate macOS-specific path rather than reviving this Linux logic. See
+/// specs/cmux-macos-extensibility.html Phase 4.
+#[cfg(target_os = "linux")]
 pub fn is_nvidia() -> bool {
     std::path::Path::new("/sys/module/nvidia").exists()
         || std::path::Path::new("/proc/driver/nvidia/version").exists()
+}
+
+/// Non-Linux: there is no NVIDIA proprietary driver / EGL stack to work
+/// around, so the GL workaround never applies.
+#[cfg(not(target_os = "linux"))]
+pub fn is_nvidia() -> bool {
+    false
 }
 
 fn session_type() -> String {

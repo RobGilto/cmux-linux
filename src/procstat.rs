@@ -29,6 +29,24 @@ pub struct ProcEntry {
     pub cmux_pane: Option<String>,
 }
 
+// ---------------------------------------------------------------------------
+// Leaf process readers. These are the only platform-specific parts of `cmux
+// top`: Linux reads /proc, macOS reads the same facts through libproc. Both
+// arms keep identical signatures so the aggregation below
+// (descendants/child_process_stats/match_pane_pts) is platform-neutral.
+//
+// macOS PORT STATUS: the macOS arms were authored on Linux and not compiled on
+// a Mac; libproc field names (TaskAllInfo.pbsd.pbi_ppid,
+// ptinfo.pti_total_user/pti_resident_size) may need adjusting. Where a fact
+// has no cheap macOS equivalent (pts number, another process's CMUX_PANE env)
+// the arm safely degrades (-1 / None) — `cmux top` still lists processes and
+// their CPU/RSS, only the pts-ordering and exact agent-pane match soften.
+// See specs/cmux-macos-extensibility.html Phase 3.
+
+/// Returns (ppid, pts, cpu_ticks) where cpu_ticks / 100 == cumulative CPU
+/// seconds (matching Linux jiffies at USER_HZ=100, which child_process_stats
+/// divides by).
+#[cfg(target_os = "linux")]
 fn read_stat(pid: u32) -> Option<(u32, i32, u64)> {
     // Returns (ppid, tty_nr→pts, utime+stime jiffies). comm can contain
     // spaces/parens; split on the LAST ')'.
@@ -50,6 +68,19 @@ fn read_stat(pid: u32) -> Option<(u32, i32, u64)> {
     Some((ppid, pts, utime + stime))
 }
 
+/// macOS: ppid + cpu from libproc TaskAllInfo. pts is not cheaply available
+/// (would need sysctl KERN_PROC_PID → e_tdev), so -1; cpu time is nanoseconds,
+/// rescaled to /100-seconds so the shared aggregation's `/hz` yields seconds.
+#[cfg(target_os = "macos")]
+fn read_stat(pid: u32) -> Option<(u32, i32, u64)> {
+    let info = libproc::proc_pid::pidinfo::<libproc::task_info::TaskAllInfo>(pid as i32, 0).ok()?;
+    let ppid = info.pbsd.pbi_ppid;
+    let cpu_ns = info.ptinfo.pti_total_user + info.ptinfo.pti_total_system;
+    // ns → centi-seconds (÷1e7) so downstream ÷100 gives whole seconds.
+    Some((ppid, -1, cpu_ns / 10_000_000))
+}
+
+#[cfg(target_os = "linux")]
 fn read_rss(pid: u32) -> u64 {
     std::fs::read_to_string(format!("/proc/{pid}/statm"))
         .ok()
@@ -62,6 +93,15 @@ fn read_rss(pid: u32) -> u64 {
         .unwrap_or(0)
 }
 
+/// macOS: resident size straight from libproc TaskAllInfo (already bytes).
+#[cfg(target_os = "macos")]
+fn read_rss(pid: u32) -> u64 {
+    libproc::proc_pid::pidinfo::<libproc::task_info::TaskAllInfo>(pid as i32, 0)
+        .map(|info| info.ptinfo.pti_resident_size)
+        .unwrap_or(0)
+}
+
+#[cfg(target_os = "linux")]
 fn read_cmdline(pid: u32) -> String {
     std::fs::read(format!("/proc/{pid}/cmdline"))
         .map(|b| {
@@ -74,6 +114,16 @@ fn read_cmdline(pid: u32) -> String {
         .unwrap_or_default()
 }
 
+/// macOS: full argv requires sysctl KERN_PROCARGS2; the executable path (or
+/// short name) from libproc is a good-enough label for `cmux top`.
+#[cfg(target_os = "macos")]
+fn read_cmdline(pid: u32) -> String {
+    libproc::proc_pid::pidpath(pid as i32)
+        .or_else(|_| libproc::proc_pid::name(pid as i32))
+        .unwrap_or_default()
+}
+
+#[cfg(target_os = "linux")]
 fn read_cmux_pane(pid: u32) -> Option<String> {
     let environ = std::fs::read(format!("/proc/{pid}/environ")).ok()?;
     environ
@@ -82,7 +132,18 @@ fn read_cmux_pane(pid: u32) -> Option<String> {
         .find_map(|kv| kv.strip_prefix("CMUX_PANE=").map(String::from))
 }
 
-/// Scan /proc once: pid → ppid for every process.
+/// macOS: reading another process's environment needs sysctl KERN_PROCARGS2
+/// (privileged/awkward). Degrade to None — agent panes then fall back to the
+/// creation-order heuristic instead of the exact CMUX_PANE match.
+///
+/// PORT STATUS: real KERN_PROCARGS2 env read is deferred; needs macOS work.
+#[cfg(target_os = "macos")]
+fn read_cmux_pane(_pid: u32) -> Option<String> {
+    None
+}
+
+/// Scan the process table once: pid → ppid for every process.
+#[cfg(target_os = "linux")]
 fn process_tree() -> Vec<(u32, u32)> {
     let Ok(dir) = std::fs::read_dir("/proc") else {
         return Vec::new();
@@ -90,6 +151,22 @@ fn process_tree() -> Vec<(u32, u32)> {
     dir.filter_map(|e| e.ok())
         .filter_map(|e| e.file_name().to_string_lossy().parse::<u32>().ok())
         .filter_map(|pid| read_stat(pid).map(|(ppid, _, _)| (pid, ppid)))
+        .collect()
+}
+
+/// macOS: enumerate pids via libproc, read each ppid from BSDInfo.
+#[cfg(target_os = "macos")]
+fn process_tree() -> Vec<(u32, u32)> {
+    use libproc::processes::{pids_by_type, ProcFilter};
+    let Ok(pids) = pids_by_type(ProcFilter::All) else {
+        return Vec::new();
+    };
+    pids.into_iter()
+        .filter_map(|pid| {
+            libproc::proc_pid::pidinfo::<libproc::bsd_info::BSDInfo>(pid as i32, 0)
+                .ok()
+                .map(|info| (pid, info.pbi_ppid))
+        })
         .collect()
 }
 

@@ -14,6 +14,18 @@
 #[path = "../cli/mod.rs"]
 mod cli;
 
+// cli/discovery.rs resolves the socket via crate::platform::dirs; this binary
+// includes cli by path and so needs the same leaf module available. See the
+// matching shim in src/bin/cmux.rs for why the leaf is top-level + re-exported.
+#[path = "../platform/dirs.rs"]
+pub mod platform_dirs;
+#[path = "../platform/procinfo.rs"]
+pub mod platform_procinfo;
+mod platform {
+    pub(crate) use super::platform_dirs as dirs;
+    pub(crate) use super::platform_procinfo as procinfo;
+}
+
 use clap::CommandFactory;
 use clap_complete::{generate_to, Shell};
 use clap_mangen::Man;

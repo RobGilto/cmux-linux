@@ -22,14 +22,22 @@ pub struct Config {
 
 /// Launch-time platform self-configuration -- [launch] in config.toml.
 /// Consumed by platform::apply_launch_env() before GTK init.
+///
+/// Both knobs below are **Linux-only** — they configure the NVIDIA/Mesa
+/// EGL-vs-desktop-GL and X11/Wayland backend workarounds. On macOS there is no
+/// EGL/NVIDIA/Wayland stack, so `apply_launch_env` is a no-op and these fields
+/// are ignored (they stay in the schema so a shared config.toml loads cleanly
+/// on both platforms). See specs/cmux-macos-extensibility.html Phase 4.
 #[derive(serde::Deserialize, Debug)]
 pub struct LaunchConfig {
-    /// GL workaround mode: "auto" (apply gl-prefer-gl when NVIDIA is
-    /// detected), "force" (always apply), "off" (never touch GDK_DEBUG).
+    /// (Linux only) GL workaround mode: "auto" (apply gl-prefer-gl when NVIDIA
+    /// is detected), "force" (always apply), "off" (never touch GDK_DEBUG).
+    /// Ignored on macOS.
     #[serde(default = "default_gl_workaround")]
     pub gl_workaround: String,
-    /// Old wrapper-script behavior: force GDK_BACKEND=x11 on NVIDIA+Wayland.
-    /// Off by default — native Wayland works once gl-prefer-gl is applied.
+    /// (Linux only) Old wrapper-script behavior: force GDK_BACKEND=x11 on
+    /// NVIDIA+Wayland. Off by default — native Wayland works once gl-prefer-gl
+    /// is applied. Ignored on macOS.
     #[serde(default)]
     pub force_x11_backend: bool,
 }

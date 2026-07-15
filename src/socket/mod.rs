@@ -14,11 +14,13 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
 /// Compute the Unix socket path per D-06.
-/// $XDG_RUNTIME_DIR/cmux/cmux.sock, fallback /run/user/{uid}/cmux/cmux.sock.
+/// `<runtime_dir>/cmux/cmux.sock` — on Linux `$XDG_RUNTIME_DIR` (fallback
+/// `/run/user/{uid}`), on macOS `$TMPDIR` (fallback `/tmp`). See
+/// `platform::dirs::runtime_dir`.
 pub fn socket_path() -> PathBuf {
-    let base = std::env::var("XDG_RUNTIME_DIR")
-        .unwrap_or_else(|_| format!("/run/user/{}", unsafe { libc::getuid() }));
-    PathBuf::from(base).join("cmux").join("cmux.sock")
+    crate::platform::dirs::runtime_dir()
+        .join("cmux")
+        .join("cmux.sock")
 }
 
 /// Returns the directory containing the socket file.
@@ -752,6 +754,11 @@ mod tests {
     /// SOCK-01: Socket path must be under XDG_RUNTIME_DIR/cmux/.
     #[test]
     fn test_socket_path_creation() {
+        // Serialize against platform::dirs' env-mutating tests — they share the
+        // process-global XDG_RUNTIME_DIR this test sets and asserts on.
+        let _g = crate::platform::dirs::ENV_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         unsafe { std::env::set_var("XDG_RUNTIME_DIR", "/tmp/test-xdg") };
         let path = socket_path();
         assert_eq!(

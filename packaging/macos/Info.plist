@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Info.plist for the macOS cmux.app bundle.
+
+  PORT STATUS: authored on Linux as part of the macOS extensibility port and
+  not yet exercised by an actual `.app` build on a Mac. Version is kept in sync
+  with Cargo.toml manually (or by build-app-bundle.sh substitution).
+  See specs/cmux-macos-extensibility.html Phase 5.
+
+  Bundle id is deliberately distinct from the Linux freedesktop app id
+  (com.cmux_lx.terminal) so the two platforms' desktop integration don't
+  collide in shared tooling.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>cmux</string>
+    <key>CFBundleDisplayName</key>
+    <string>cmux</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.cmux.terminal</string>
+    <key>CFBundleVersion</key>
+    <string>0.1.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleExecutable</key>
+    <string>cmux-app</string>
+    <key>CFBundleIconFile</key>
+    <string>cmux.icns</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>12.0</string>
+    <!-- cmux is a windowed GUI app, not a background agent. -->
+    <key>LSUIElement</key>
+    <false/>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <!-- GTK4 on macOS uses the Quartz GDK backend; no special entitlements
+         needed for local PTYs, but hardened-runtime notarization (Phase 5)
+         may require an accompanying entitlements.plist. -->
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+</dict>
+</plist>

@@ -14,11 +14,10 @@ pub use socket_client::CliError;
 use clap::{Parser, Subcommand};
 use std::time::Duration;
 
-/// This process's own controlling terminal, as a pts number, on Linux
-/// (`/proc/self/stat`'s tty_nr field decoded the same way cmux-app decodes
-/// every pane shell's pts for `cmux top`). None if not running under a real
-/// tty (e.g. piped/non-interactive), in which case there's no self-close
-/// risk to guard against.
+/// This process's own controlling terminal, as a pts number. None if not
+/// running under a real tty (e.g. piped/non-interactive), in which case
+/// there's no self-close risk to guard against. Platform-specific — see
+/// `platform::procinfo::caller_pts`.
 ///
 /// Sent along with `surface.close` so the server can detect "this command
 /// is running inside the very pane it's being asked to close" — that
@@ -26,15 +25,7 @@ use std::time::Duration;
 /// mid-call, before a response could ever reach you, which looks like a
 /// hang rather than the close it actually was.
 fn caller_pts() -> Option<i32> {
-    let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
-    let rest = stat.rsplit_once(')')?.1;
-    let tty_nr: i32 = rest.split_whitespace().nth(4)?.parse().ok()?;
-    let major = (tty_nr >> 8) & 0xfff;
-    if (136..=143).contains(&major) {
-        Some((tty_nr & 0xff) | (((tty_nr >> 20) & 0xfff) << 8))
-    } else {
-        None
-    }
+    crate::platform::procinfo::caller_pts()
 }
 
 #[derive(Parser)]

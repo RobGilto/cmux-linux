@@ -33,6 +33,12 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tracing-appender = "0.2.5"
 
+# macOS has no /proc; process introspection (cmux top, pane cwd, sibling-app
+# discovery) goes through libproc (proc_pidinfo / proc_listpids) instead.
+# Target-gated so Linux builds never fetch or resolve it.
+[target.'cfg(target_os = "macos")'.dependencies]
+libproc = "0.14"
+
 [[bin]]
 name = "cmux-generate"
 path = "src/bin/generate.rs"

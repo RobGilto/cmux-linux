@@ -23,29 +23,11 @@ fn stage(msg: &str) {
 }
 
 /// PIDs of this user's cmux-app processes (`cmux-app` or the packaged
-/// `cmux-app.bin`), excluding ourselves. /proc comm is truncated to 15
-/// chars, so prefix-match.
+/// `cmux-app.bin`), excluding ourselves. Prefix-matched (Linux `/proc/comm`
+/// truncates to 15 chars). Platform-specific — see
+/// `platform::procinfo::find_app_pids`.
 pub(crate) fn find_app_pids() -> Vec<i32> {
-    let me = std::process::id() as i32;
-    let my_uid = unsafe { libc::getuid() };
-    let Ok(dir) = std::fs::read_dir("/proc") else {
-        return Vec::new();
-    };
-    dir.filter_map(|e| e.ok())
-        .filter_map(|e| e.file_name().to_string_lossy().parse::<i32>().ok())
-        .filter(|&pid| pid != me)
-        .filter(|&pid| {
-            std::fs::read_to_string(format!("/proc/{pid}/comm"))
-                .map(|c| c.trim().starts_with("cmux-app"))
-                .unwrap_or(false)
-        })
-        .filter(|&pid| {
-            // Only our own processes — never signal another user's cmux.
-            std::fs::metadata(format!("/proc/{pid}"))
-                .map(|m| std::os::unix::fs::MetadataExt::uid(&m) == my_uid)
-                .unwrap_or(false)
-        })
-        .collect()
+    crate::platform::procinfo::find_app_pids("cmux-app")
 }
 
 fn ping_ok(socket_override: &Option<String>) -> bool {
